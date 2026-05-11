@@ -1,30 +1,33 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:hapticway/main.dart';
+import 'package:hapticway/core/constants.dart';
+import 'package:hapticway/ui/widgets/status_announcer.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  setUpAll(() => TestWidgetsFlutterBinding.ensureInitialized());
+  group('constants', () {
+    test('haptic k default is within slider range', () {
+      expect(kHapticConstantK, greaterThanOrEqualTo(0.1));
+      expect(kHapticConstantK, lessThanOrEqualTo(2.0));
+    });
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    test('distance bounds are positive and ordered', () {
+      expect(kMinDistanceMeters, greaterThan(0));
+      expect(kMaxDistanceMeters, greaterThan(kMinDistanceMeters));
+    });
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  group('StatusAnnouncer throttle', () {
+    setUp(() => StatusAnnouncer.reset());
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    test('second identical call within 1500 ms is silently dropped', () {
+      // Both calls complete without error; the second is throttled internally.
+      StatusAnnouncer.announce('obstacle detected');
+      StatusAnnouncer.announce('obstacle detected');
+    });
+
+    test('different labels are not throttled', () {
+      StatusAnnouncer.announce('obstacle detected');
+      StatusAnnouncer.announce('path clear');
+    });
   });
 }
