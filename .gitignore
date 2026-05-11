@@ -45,6 +45,7 @@ app.*.map.json
 /android/app/release
 android/build/
 
-# Research documents (kept locally, not needed in repo)
+# Research documents and planning files (kept locally, not needed in repo)
 *.pdf
 *.docx
+HAPTICWAY_CODING_TODO.md
