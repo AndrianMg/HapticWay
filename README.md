@@ -14,6 +14,8 @@ An offline-first Android navigation aid for visually impaired university student
 | 2 | §4.2 | Personas & user stories | ✅ Done |
 | 2 | §4.3 | Accessibility-first wireframes | ✅ Done |
 | 2 | §4.4 | Clickable prototype (three screens) | ✅ Done |
+| 2 | §4.5 | Wizard-of-Oz haptic prototype | ✅ Done |
+| 2 | §4.6 | Manual WCAG 2.1 audit (`docs/wcag_audit.md`) | ✅ Done |
 | 3 | §5 | Inference pipeline (camera + TFLite) | 🔜 Next |
 | 3 | §6 | ARCore depth integration | 🔜 Planned |
 
