@@ -1,6 +1,14 @@
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../core/constants.dart';
+import '../haptics/haptic_engine.dart';
+import '../inference/camera_isolate.dart';
+import '../inference/detection.dart';
 import 'settings_screen.dart';
 import 'widgets/status_announcer.dart';
 
@@ -12,20 +20,103 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  // ── Prefs ──────────────────────────────────────────────────────────────────
   bool _hapticOverride = false;
-  final String _detectionStatus = 'Scanning…';
+  double _hapticK = kHapticConstantK;
+
+  // ── Camera ─────────────────────────────────────────────────────────────────
+  CameraController? _camCtrl;
+  CameraIsolate? _isolate;
+  StreamSubscription<List<Detection>>? _detSub;
+
+  // ── UI state ───────────────────────────────────────────────────────────────
+  String _statusText = 'Initialising…';
+  double _hapticLevel = 0.0; // 0–1, drives intensity bar
 
   @override
   void initState() {
     super.initState();
     _loadPrefs();
+    _initCamera();
   }
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _hapticOverride = prefs.getBool(kPrefKeyOverride) ?? false;
+      _hapticK = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     });
+  }
+
+  Future<void> _initCamera() async {
+    try {
+      final cameras = await availableCameras();
+      if (cameras.isEmpty) {
+        _setStatus('No camera found');
+        return;
+      }
+      final back = cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+
+      _camCtrl = CameraController(
+        back,
+        ResolutionPreset.low, // 320×240 — minimises preprocessing cost
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420,
+      );
+      await _camCtrl!.initialize();
+      if (!mounted) return;
+
+      _isolate = CameraIsolate();
+      await _isolate!.start();
+
+      _detSub = _isolate!.detections.listen(_onDetections);
+      await _camCtrl!.startImageStream(_onFrame);
+
+      _setStatus('Scanning…');
+    } catch (e) {
+      _setStatus('Camera unavailable');
+    }
+  }
+
+  void _onFrame(CameraImage image) => _isolate?.processFrame(image);
+
+  void _onDetections(List<Detection> detections) {
+    if (!mounted) return;
+
+    if (detections.isEmpty) {
+      setState(() {
+        _statusText = 'Scanning…';
+        _hapticLevel = 0.0;
+      });
+      return;
+    }
+
+    final closest = detections.first; // sorted largest-bbox-first by Postprocess
+    final amplitude = math.sqrt(closest.proximityAmplitude).clamp(0.0, 1.0);
+
+    setState(() {
+      _statusText = '${closest.label} detected'
+          ' (${(closest.confidence * 100).round()}%)';
+      _hapticLevel = amplitude;
+    });
+
+    StatusAnnouncer.announce('${closest.label} ahead');
+
+    if (!_hapticOverride) {
+      HapticEngine.vibrate(
+        amplitude * _hapticK.clamp(0.0, 1.0),
+        const Duration(milliseconds: 200),
+      );
+    }
+  }
+
+  void _setStatus(String text) {
+    if (!mounted) return;
+    setState(() => _statusText = text);
   }
 
   Future<void> _toggleOverride() async {
@@ -41,8 +132,18 @@ class _HomeScreenState extends State<HomeScreen> {
     Navigator.push(
       context,
       MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    );
+    ).then((_) => _loadPrefs()); // reload k after returning
   }
+
+  @override
+  void dispose() {
+    _detSub?.cancel();
+    _isolate?.stop();
+    _camCtrl?.dispose();
+    super.dispose();
+  }
+
+  // ── Build ──────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
@@ -106,17 +207,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildViewfinder() {
+    final ctrl = _camCtrl;
     return ExcludeSemantics(
-      child: Container(
-        color: const Color(0xFF0A0A1A),
-        child: const Center(
-          child: Icon(
-            Icons.camera_alt_outlined,
-            color: Color(0xFF2A2A3E),
-            size: 72,
-          ),
-        ),
-      ),
+      child: ctrl != null && ctrl.value.isInitialized
+          ? CameraPreview(ctrl)
+          : Container(
+              color: const Color(0xFF0A0A1A),
+              child: Center(
+                child: _statusText == 'Camera unavailable'
+                    ? const Icon(Icons.no_photography_outlined,
+                        color: Color(0xFF444466), size: 64)
+                    : const CircularProgressIndicator(
+                        color: Color(0xFF4CAF50)),
+              ),
+            ),
     );
   }
 
@@ -125,7 +229,7 @@ class _HomeScreenState extends State<HomeScreen> {
       order: const NumericFocusOrder(3),
       child: Semantics(
         liveRegion: true,
-        label: _detectionStatus,
+        label: _statusText,
         child: Container(
           margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -138,15 +242,17 @@ class _HomeScreenState extends State<HomeScreen> {
               Container(
                 width: 12,
                 height: 12,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF4CAF50),
+                decoration: BoxDecoration(
+                  color: _hapticLevel > 0
+                      ? const Color(0xFFFF6B35)
+                      : const Color(0xFF4CAF50),
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  _detectionStatus,
+                  _statusText,
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 16,
@@ -179,9 +285,13 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: LinearProgressIndicator(
-                value: 0,
+                value: _hapticLevel,
                 backgroundColor: const Color(0xFF2A2A3E),
-                valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF4CAF50)),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _hapticLevel > 0.6
+                      ? const Color(0xFFFF6B35)
+                      : const Color(0xFF4CAF50),
+                ),
                 minHeight: 6,
                 borderRadius: BorderRadius.circular(3),
               ),
@@ -200,7 +310,8 @@ class _HomeScreenState extends State<HomeScreen> {
           FocusTraversalOrder(
             order: const NumericFocusOrder(4),
             child: Semantics(
-              label: 'Haptic override, currently ${_hapticOverride ? 'on' : 'off'}. Double tap to toggle.',
+              label:
+                  'Haptic override, currently ${_hapticOverride ? 'on' : 'off'}. Double tap to toggle.',
               toggled: _hapticOverride,
               excludeSemantics: true,
               child: SwitchListTile(
