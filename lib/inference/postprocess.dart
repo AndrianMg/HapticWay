@@ -1,56 +1,76 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import '../core/constants.dart';
 import 'detection.dart';
 
-// Parses raw SSD MobileNet v2 output tensors into a filtered Detection list.
-// NMS is already applied inside the TFLite model — we only filter by
-// confidence threshold and restrict to the 8 navigation-relevant classes.
+// Parses YOLOv8 TFLite output into a filtered, NMS-deduplicated Detection list.
 class Postprocess {
-  // Classes available in the stock COCO model.
-  // door, staircase, pole, wet_floor_sign are added after custom training (§5.6).
   static const _targetClasses = {
     'person', 'bicycle', 'bench', 'chair',
     'door', 'staircase', 'pole', 'wet_floor_sign',
   };
 
-  static List<Detection> parse({
-    required List<List<double>> boxes,  // [n, 4] — [top, left, bottom, right]
-    required List<double> classes,      // [n] — float class index
-    required List<double> scores,       // [n] — confidence 0–1
-    required int count,
+  // Parses YOLOv8n output tensor: raw[4+numClasses][numAnchors].
+  // Layout per anchor i: [cx, cy, w, h, score_class0, score_class1, ...]
+  // All coordinates are normalised [0, 1].
+  static List<Detection> parseYolo({
+    required List<List<double>> raw,  // [4+numClasses][numAnchors]
     required List<String> labels,
   }) {
-    final result = <Detection>[];
-    final now = DateTime.now();
-    final n = count.clamp(0, boxes.length);
+    final numAnchors = raw[0].length;
+    final numClasses = raw.length - 4;
 
-    for (int i = 0; i < n; i++) {
-      if (scores[i] < kMinConfidence) continue;
+    final candidates = <_YoloDet>[];
 
-      final classIdx = classes[i].round();
-      // Model outputs 0-indexed classes (0=person, 61=chair).
-      // Our label file has ??? at index 0, so person is at index 1.
-      final labelIdx = classIdx + 1;
-      if (labelIdx < 0 || labelIdx >= labels.length) continue;
+    for (int i = 0; i < numAnchors; i++) {
+      // Find the highest-scoring class for this anchor
+      int bestCls = 0;
+      double bestScore = raw[4][i];
+      for (int c = 1; c < numClasses; c++) {
+        final s = raw[4 + c][i];
+        if (s > bestScore) { bestScore = s; bestCls = c; }
+      }
+      if (bestScore < kMinConfidence) continue;
+      if (bestCls >= labels.length) continue;
 
-      final label = labels[labelIdx];
+      final label = labels[bestCls]; // YOLOv8: 0-indexed, no background class
       if (!_targetClasses.contains(label)) continue;
 
-      final box = boxes[i];
-      // SSD output: [top, left, bottom, right], all normalised [0, 1]
-      result.add(Detection(
+      // Convert [cx, cy, w, h] → [x1, y1, x2, y2]
+      final cx = raw[0][i]; final cy = raw[1][i];
+      final hw = raw[2][i] / 2; final hh = raw[3][i] / 2;
+      candidates.add(_YoloDet(
         label: label,
-        confidence: scores[i],
-        bbox: Rect.fromLTRB(
-          box[1].clamp(0.0, 1.0), // left
-          box[0].clamp(0.0, 1.0), // top
-          box[3].clamp(0.0, 1.0), // right
-          box[2].clamp(0.0, 1.0), // bottom
-        ),
-        timestamp: now,
+        score: bestScore,
+        x1: (cx - hw).clamp(0.0, 1.0),
+        y1: (cy - hh).clamp(0.0, 1.0),
+        x2: (cx + hw).clamp(0.0, 1.0),
+        y2: (cy + hh).clamp(0.0, 1.0),
       ));
     }
+
+    // Greedy NMS — suppress overlapping boxes with IoU > 0.45
+    candidates.sort((a, b) => b.score.compareTo(a.score));
+    final kept = <_YoloDet>[];
+    final suppressed = List.filled(candidates.length, false);
+    for (int i = 0; i < candidates.length; i++) {
+      if (suppressed[i]) continue;
+      kept.add(candidates[i]);
+      for (int j = i + 1; j < candidates.length; j++) {
+        if (!suppressed[j] && _iou(candidates[i], candidates[j]) > 0.45) {
+          suppressed[j] = true;
+        }
+      }
+    }
+
+    final now = DateTime.now();
+    final result = kept.map((d) => Detection(
+      label: d.label,
+      confidence: d.score,
+      bbox: Rect.fromLTRB(d.x1, d.y1, d.x2, d.y2),
+      timestamp: now,
+    )).toList();
 
     // Sort closest-first: larger bbox area = nearer proxy until ARCore §6
     result.sort((a, b) {
@@ -58,7 +78,28 @@ class Postprocess {
       final bArea = b.bbox.width * b.bbox.height;
       return bArea.compareTo(aArea);
     });
-
     return result;
   }
+
+  static double _iou(_YoloDet a, _YoloDet b) {
+    final ix1 = math.max(a.x1, b.x1);
+    final iy1 = math.max(a.y1, b.y1);
+    final ix2 = math.min(a.x2, b.x2);
+    final iy2 = math.min(a.y2, b.y2);
+    final inter = math.max(0.0, ix2 - ix1) * math.max(0.0, iy2 - iy1);
+    if (inter == 0) return 0;
+    final aArea = (a.x2 - a.x1) * (a.y2 - a.y1);
+    final bArea = (b.x2 - b.x1) * (b.y2 - b.y1);
+    return inter / (aArea + bArea - inter);
+  }
+}
+
+class _YoloDet {
+  final String label;
+  final double score, x1, y1, x2, y2;
+  const _YoloDet({
+    required this.label, required this.score,
+    required this.x1, required this.y1,
+    required this.x2, required this.y2,
+  });
 }

@@ -28,31 +28,28 @@ class TfliteRunner {
   }
 
   // Returns an empty list if the model is not ready.
+  // YOLOv8n output: [1, 4+N_classes, 2100] — single tensor, raw predictions before NMS.
+  // NMS is applied in Postprocess.parseYolo().
   List<Detection> run(Uint8List rgbInput) {
     if (!_ready || _interpreter == null) return [];
 
-    // Output buffers — SSD MobileNet v2 produces max 10 detections.
-    const maxDet = 10;
-    final outBoxes =
-        List.generate(1, (_) => List.generate(maxDet, (_) => List<double>.filled(4, 0.0)));
-    final outClasses = List.generate(1, (_) => List<double>.filled(maxDet, 0.0));
-    final outScores = List.generate(1, (_) => List<double>.filled(maxDet, 0.0));
-    final outCount = List<double>.filled(1, 0.0);
+    final outputTensor = _interpreter!.getOutputTensor(0);
+    final outShape = outputTensor.shape; // [1, rows, anchors]
+    final rows = outShape[1];
+    final anchors = outShape[2];
+
+    final rawOutput = List.generate(
+      1, (_) => List.generate(rows, (_) => List<double>.filled(anchors, 0.0)),
+    );
 
     try {
-      _interpreter!.runForMultipleInputs(
-        [rgbInput],
-        {0: outBoxes, 1: outClasses, 2: outScores, 3: outCount},
-      );
+      _interpreter!.run(rgbInput, rawOutput);
     } catch (_) {
       return [];
     }
 
-    return Postprocess.parse(
-      boxes: outBoxes[0],
-      classes: outClasses[0],
-      scores: outScores[0],
-      count: outCount[0].round(),
+    return Postprocess.parseYolo(
+      raw: rawOutput[0],   // [rows, anchors] — rows = 4 + numClasses
       labels: _labels,
     );
   }
