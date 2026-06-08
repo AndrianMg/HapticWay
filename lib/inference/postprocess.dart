@@ -29,9 +29,12 @@ class Postprocess {
       if (scores[i] < kMinConfidence) continue;
 
       final classIdx = classes[i].round();
-      if (classIdx < 0 || classIdx >= labels.length) continue;
+      // Model outputs 0-indexed classes (0=person, 61=chair).
+      // Our label file has ??? at index 0, so person is at index 1.
+      final labelIdx = classIdx + 1;
+      if (labelIdx < 0 || labelIdx >= labels.length) continue;
 
-      final label = labels[classIdx];
+      final label = labels[labelIdx];
       if (!_targetClasses.contains(label)) continue;
 
       final box = boxes[i];

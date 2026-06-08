@@ -1,7 +1,7 @@
 import 'package:vibration/vibration.dart';
 
 class HapticEngine {
-  static const int _maxPulsesPerSecond = 20;
+  static const int _maxPulsesPerSecond = 2;
   static DateTime? _lastPulse;
 
   static Future<void> vibrate(double amplitude, Duration duration) async {
@@ -12,10 +12,13 @@ class HapticEngine {
     }
     _lastPulse = now;
 
-    final hasVibrator = await Vibration.hasVibrator();
-    if (!hasVibrator) return;
+    if (!await Vibration.hasVibrator()) return;
 
-    final amplitudeInt = (amplitude * 255).round().clamp(1, 255);
+    final hasAmplitude = await Vibration.hasAmplitudeControl();
+    final amplitudeInt = hasAmplitude
+        ? (amplitude * 255).round().clamp(1, 255)
+        : -1; // -1 = device default amplitude
+
     await Vibration.vibrate(
       duration: duration.inMilliseconds,
       amplitude: amplitudeInt,

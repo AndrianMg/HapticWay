@@ -232,6 +232,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Semantics(
             label: 'Sensitivity slider',
             value: 'k equals ${_k.toStringAsFixed(1)}',
+            increasedValue: 'k equals ${(_k + 0.1).clamp(0.1, 2.0).toStringAsFixed(1)}',
+            decreasedValue: 'k equals ${(_k - 0.1).clamp(0.1, 2.0).toStringAsFixed(1)}',
             hint: 'Minimum 0.1, maximum 2.0. Swipe right to increase, left to decrease.',
             onIncrease: () => _onSliderChanged((_k + 0.1).clamp(0.1, 2.0)),
             onDecrease: () => _onSliderChanged((_k - 0.1).clamp(0.1, 2.0)),

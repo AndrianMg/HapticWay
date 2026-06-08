@@ -33,6 +33,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String _statusText = 'Initialising…';
   double _hapticLevel = 0.0; // 0–1, drives intensity bar
 
+  // ── Stability filter ───────────────────────────────────────────────────────
+  String? _stableLabel;
+  int _stableCount = 0;
+
   @override
   void initState() {
     super.initState();
@@ -88,6 +92,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (!mounted) return;
 
     if (detections.isEmpty) {
+      _stableLabel = null;
+      _stableCount = 0;
       setState(() {
         _statusText = 'Scanning…';
         _hapticLevel = 0.0;
@@ -96,6 +102,17 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     final closest = detections.first; // sorted largest-bbox-first by Postprocess
+
+    // Stability filter: require kDetectionStabilityFrames consecutive frames
+    // with the same label before triggering alerts — suppresses brief false positives.
+    if (closest.label == _stableLabel) {
+      _stableCount++;
+    } else {
+      _stableLabel = closest.label;
+      _stableCount = 1;
+    }
+    if (_stableCount < kDetectionStabilityFrames) return;
+
     final amplitude = math.sqrt(closest.proximityAmplitude).clamp(0.0, 1.0);
 
     setState(() {

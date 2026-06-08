@@ -22,22 +22,31 @@ class CameraIsolate {
   Stream<List<Detection>> get detections => _detectionController.stream;
 
   Future<void> start() async {
+    // Load assets here on the main isolate — rootBundle is unavailable in background isolates.
+    final modelData = await rootBundle.load('assets/models/ssd_mobilenet_v2_int8.tflite');
+    final modelBytes = modelData.buffer.asUint8List();
+    final labelsRaw = await rootBundle.loadString('assets/labels/coco_labels_filtered.txt');
+    final labels = labelsRaw
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+
     final fromIsolate = ReceivePort();
     final token = RootIsolateToken.instance!;
 
     _isolate = await Isolate.spawn(
       _isolateEntry,
-      _IsolateArgs(token, fromIsolate.sendPort),
+      _IsolateArgs(token, fromIsolate.sendPort, modelBytes, labels),
     );
 
     final completer = Completer<void>();
 
     fromIsolate.listen((msg) {
-      if (msg is SendPort) {
-        _toIsolate = msg;
-        _toIsolate!.send(_IsolateCmd.init);
-      } else if (msg == _IsolateCmd.ready) {
+      if (msg == _IsolateCmd.ready) {
         completer.complete();
+      } else if (msg is SendPort) {
+        _toIsolate = msg;
       } else if (msg is List) {
         final detections =
             msg.map((m) => Detection.fromMap(Map<String, dynamic>.from(m as Map))).toList();
@@ -82,7 +91,9 @@ class CameraIsolate {
 class _IsolateArgs {
   final RootIsolateToken token;
   final SendPort sendPort;
-  const _IsolateArgs(this.token, this.sendPort);
+  final Uint8List modelBytes;
+  final List<String> labels;
+  _IsolateArgs(this.token, this.sendPort, this.modelBytes, this.labels);
 }
 
 class _FrameMsg {
@@ -96,7 +107,7 @@ class _FrameMsg {
   });
 }
 
-enum _IsolateCmd { init, ready }
+enum _IsolateCmd { ready }
 
 @pragma('vm:entry-point')
 Future<void> _isolateEntry(_IsolateArgs args) async {
@@ -106,12 +117,11 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
   args.sendPort.send(fromMain.sendPort);
 
   final runner = TfliteRunner();
+  runner.initializeFromBuffer(args.modelBytes, args.labels);
+  args.sendPort.send(_IsolateCmd.ready);
 
   await for (final msg in fromMain) {
-    if (msg == _IsolateCmd.init) {
-      await runner.initialize();
-      args.sendPort.send(_IsolateCmd.ready);
-    } else if (msg is _FrameMsg) {
+    if (msg is _FrameMsg) {
       if (!runner.isReady) {
         args.sendPort.send(<Map>[]);
         continue;

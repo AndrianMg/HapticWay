@@ -1,4 +1,4 @@
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import 'detection.dart';
@@ -11,39 +11,18 @@ class TfliteRunner {
 
   bool get isReady => _ready;
 
-  Future<void> initialize() async {
-    await _loadLabels();
-    await _loadInterpreter();
-  }
-
-  Future<void> _loadLabels() async {
-    try {
-      final raw = await rootBundle.loadString('assets/labels/coco_labels_filtered.txt');
-      _labels = raw
-          .split('\n')
-          .map((l) => l.trim())
-          .where((l) => l.isNotEmpty)
-          .toList();
-    } catch (e) {
-      // Labels missing — detection will produce no results.
-    }
-  }
-
-  Future<void> _loadInterpreter() async {
-    // useNnApiForAndroid enables the NNAPI accelerator (API 27+) with CPU fallback.
+  // Called from a background isolate — receives bytes loaded by the main isolate
+  // because rootBundle and Interpreter.fromAsset() are unavailable in isolates.
+  void initializeFromBuffer(Uint8List modelBytes, List<String> labels) {
+    _labels = labels;
     final options = InterpreterOptions()
       ..threads = 4
       ..useNnApiForAndroid = true;
-
     try {
-      _interpreter = await Interpreter.fromAsset(
-        'models/ssd_mobilenet_v2_int8.tflite',
-        options: options,
-      );
+      _interpreter = Interpreter.fromBuffer(modelBytes, options: options);
       _interpreter!.allocateTensors();
       _ready = true;
-    } catch (e) {
-      // Model file not yet present — place it at assets/models/ssd_mobilenet_v2_int8.tflite
+    } catch (_) {
       _ready = false;
     }
   }
