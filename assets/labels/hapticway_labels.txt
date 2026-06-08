@@ -1,0 +1,9 @@
+???
+person
+bicycle
+bench
+chair
+door
+staircase
+pole
+wet_floor_sign

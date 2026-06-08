@@ -58,6 +58,8 @@ flutter:
   assets:
     - assets/models/ssd_mobilenet_v2_int8.tflite
     - assets/labels/coco_labels_filtered.txt
+    - assets/labels/hapticway_labels.txt
+    # §5.6: add hapticway_custom.tflite here once the Colab notebook produces it
 
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a

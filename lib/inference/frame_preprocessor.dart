@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 
 // Converts an Android YUV_420_888 camera frame to a flat RGB Uint8List
-// of exactly 300 × 300 × 3 bytes, suitable for SSD MobileNet v2 input.
+// of exactly 320 × 320 × 3 bytes, suitable for EfficientDet-Lite0 input.
 // All operations reuse pre-allocated buffers — no per-frame heap allocation.
 class FramePreprocessor {
-  static const int modelSize = 300;
+  static const int modelSize = 320;
 
   static final Uint8List _outBuffer = Uint8List(modelSize * modelSize * 3);
 

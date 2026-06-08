@@ -28,7 +28,7 @@ class TfliteRunner {
   }
 
   // Returns an empty list if the model is not ready.
-  List<Detection> run(Uint8List rgbFrame300x300) {
+  List<Detection> run(Uint8List rgbInput) {
     if (!_ready || _interpreter == null) return [];
 
     // Output buffers — SSD MobileNet v2 produces max 10 detections.
@@ -41,7 +41,7 @@ class TfliteRunner {
 
     try {
       _interpreter!.runForMultipleInputs(
-        [rgbFrame300x300],
+        [rgbInput],
         {0: outBoxes, 1: outClasses, 2: outScores, 3: outCount},
       );
     } catch (_) {
