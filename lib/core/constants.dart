@@ -7,6 +7,7 @@ const double kMaxDistanceMeters = 4.0;
 const String kPrefKeyHapticK = 'haptic_k';
 const String kPrefKeyOverride = 'haptic_override';
 const String kPrefKeyOnboardingComplete = 'onboarding_complete';
+const String kPrefKeyBenchmarkPending = 'benchmark_pending';
 
 const Duration kAnnouncementThrottle = Duration(milliseconds: 1500);
 const int kMaxConsecutiveFailedFrames = 3;

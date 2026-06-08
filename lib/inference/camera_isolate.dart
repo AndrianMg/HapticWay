@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
 
+import '../benchmark/timing_data.dart';
 import 'detection.dart';
 import 'frame_preprocessor.dart';
 import 'tflite_runner.dart';
@@ -18,8 +19,11 @@ class CameraIsolate {
 
   final _detectionController =
       StreamController<List<Detection>>.broadcast();
+  final _timingController =
+      StreamController<TimingData>.broadcast();
 
   Stream<List<Detection>> get detections => _detectionController.stream;
+  Stream<TimingData> get timing => _timingController.stream;
 
   Future<void> start() async {
     // Load assets here on the main isolate — rootBundle is unavailable in background isolates.
@@ -47,10 +51,15 @@ class CameraIsolate {
         completer.complete();
       } else if (msg is SendPort) {
         _toIsolate = msg;
-      } else if (msg is List) {
-        final detections =
-            msg.map((m) => Detection.fromMap(Map<String, dynamic>.from(m as Map))).toList();
+      } else if (msg is Map) {
+        final detections = (msg['detections'] as List)
+            .map((m) => Detection.fromMap(Map<String, dynamic>.from(m as Map)))
+            .toList();
         _detectionController.add(detections);
+        _timingController.add(TimingData(
+          preprocessMs: msg['preprocess_ms'] as int,
+          inferMs: msg['infer_ms'] as int,
+        ));
         _busy = false;
       }
     });
@@ -83,6 +92,7 @@ class CameraIsolate {
     _toIsolate = null;
     _busy = false;
     await _detectionController.close();
+    await _timingController.close();
   }
 }
 
@@ -123,9 +133,11 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
   await for (final msg in fromMain) {
     if (msg is _FrameMsg) {
       if (!runner.isReady) {
-        args.sendPort.send(<Map>[]);
+        args.sendPort.send({'detections': <Map>[], 'preprocess_ms': 0, 'infer_ms': 0});
         continue;
       }
+
+      final prepSw = Stopwatch()..start();
       final rgb = FramePreprocessor.process(
         yPlane: msg.y,
         uPlane: msg.u,
@@ -136,8 +148,17 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
         uvRowStride: msg.uvRowStride,
         uvPixelStride: msg.uvPixelStride,
       );
+      final prepMs = (prepSw..stop()).elapsedMilliseconds;
+
+      final inferSw = Stopwatch()..start();
       final detections = runner.run(rgb);
-      args.sendPort.send(detections.map((d) => d.toMap()).toList());
+      final inferMs = (inferSw..stop()).elapsedMilliseconds;
+
+      args.sendPort.send({
+        'detections': detections.map((d) => d.toMap()).toList(),
+        'preprocess_ms': prepMs,
+        'infer_ms': inferMs,
+      });
     }
   }
 }

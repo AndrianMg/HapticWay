@@ -5,6 +5,8 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../benchmark/benchmark_runner.dart';
+import '../benchmark/timing_data.dart';
 import '../core/constants.dart';
 import '../haptics/haptic_engine.dart';
 import '../inference/camera_isolate.dart';
@@ -37,6 +39,10 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _stableLabel;
   int _stableCount = 0;
 
+  // ── Benchmark ──────────────────────────────────────────────────────────────
+  final _benchmark = BenchmarkRunner();
+  StreamSubscription<TimingData>? _timingSub;
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +57,10 @@ class _HomeScreenState extends State<HomeScreen> {
       _hapticOverride = prefs.getBool(kPrefKeyOverride) ?? false;
       _hapticK = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     });
+    if (prefs.getBool(kPrefKeyBenchmarkPending) ?? false) {
+      await prefs.remove(kPrefKeyBenchmarkPending);
+      _benchmark.start(onComplete: _onBenchmarkComplete);
+    }
   }
 
   Future<void> _initCamera() async {
@@ -78,6 +88,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _isolate!.start();
 
       _detSub = _isolate!.detections.listen(_onDetections);
+      _timingSub = _isolate!.timing.listen(_benchmark.addSample);
       await _camCtrl!.startImageStream(_onFrame);
 
       _setStatus('Scanning…');
@@ -152,8 +163,19 @@ class _HomeScreenState extends State<HomeScreen> {
     ).then((_) => _loadPrefs()); // reload k after returning
   }
 
+  void _onBenchmarkComplete(String path) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Benchmark saved: $path'),
+        duration: const Duration(seconds: 6),
+      ),
+    );
+  }
+
   @override
   void dispose() {
+    _timingSub?.cancel();
     _detSub?.cancel();
     _isolate?.stop();
     _camCtrl?.dispose();

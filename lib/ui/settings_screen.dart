@@ -110,6 +110,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _sectionHeading('MANUAL TRIGGER (Research mode)'),
               const SizedBox(height: 12),
               _buildWoZButtons(),
+              const SizedBox(height: 28),
+              _sectionHeading('LATENCY BENCHMARK'),
+              const SizedBox(height: 12),
+              _buildBenchmarkButton(),
               const SizedBox(height: 24),
             ],
           ),
@@ -364,6 +368,42 @@ class _SettingsScreenState extends State<SettingsScreen> {
         );
       }),
     );
+  }
+
+  Widget _buildBenchmarkButton() {
+    return FocusTraversalOrder(
+      order: const NumericFocusOrder(13),
+      child: Semantics(
+        label: 'Start latency benchmark. Collects 20 frames then saves a CSV report.',
+        button: true,
+        excludeSemantics: true,
+        child: SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton(
+            onPressed: _startBenchmark,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF0D1B2A),
+              foregroundColor: const Color(0xFFE0E0E0),
+              side: const BorderSide(color: Color(0xFF4CAF50)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
+              'START BENCHMARK  (20 frames)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _startBenchmark() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(kPrefKeyBenchmarkPending, true);
+    if (mounted) Navigator.pop(context);
   }
 }
 
