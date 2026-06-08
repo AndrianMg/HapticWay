@@ -400,10 +400,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Future<void> _startBenchmark() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(kPrefKeyBenchmarkPending, true);
-    if (mounted) Navigator.pop(context);
+  void _startBenchmark() {
+    if (mounted) Navigator.pop<bool>(context, true);
   }
 }
 

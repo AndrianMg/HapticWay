@@ -57,10 +57,6 @@ class _HomeScreenState extends State<HomeScreen> {
       _hapticOverride = prefs.getBool(kPrefKeyOverride) ?? false;
       _hapticK = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     });
-    if (prefs.getBool(kPrefKeyBenchmarkPending) ?? false) {
-      await prefs.remove(kPrefKeyBenchmarkPending);
-      _benchmark.start(onComplete: _onBenchmarkComplete);
-    }
   }
 
   Future<void> _initCamera() async {
@@ -88,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
       await _isolate!.start();
 
       _detSub = _isolate!.detections.listen(_onDetections);
-      _timingSub = _isolate!.timing.listen(_benchmark.addSample);
+      _timingSub = _isolate!.timing.listen(_onTiming);
       await _camCtrl!.startImageStream(_onFrame);
 
       _setStatus('Scanning…');
@@ -157,10 +153,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openSettings(BuildContext context) {
-    Navigator.push(
+    Navigator.push<bool>(
       context,
-      MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
-    ).then((_) => _loadPrefs()); // reload k after returning
+      MaterialPageRoute<bool>(builder: (_) => const SettingsScreen()),
+    ).then((benchmarkRequested) {
+      _loadPrefs();
+      if (benchmarkRequested == true) {
+        _benchmark.start(onComplete: _onBenchmarkComplete);
+      }
+    });
+  }
+
+  void _onTiming(TimingData data) {
+    _benchmark.addSample(data);
+    if (_benchmark.isActive && mounted) {
+      setState(() => _statusText = 'Benchmarking… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
+    }
   }
 
   void _onBenchmarkComplete(String path) {
