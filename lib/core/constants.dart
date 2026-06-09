@@ -1,5 +1,5 @@
 const int kInferenceLatencyBudgetMs = 50;
-const double kMinConfidence = 0.45;
+const double kMinConfidence = 0.35;
 const double kHapticConstantK = 0.5;
 const double kMinDistanceMeters = 0.3;
 const double kMaxDistanceMeters = 4.0;
