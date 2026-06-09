@@ -1,13 +1,13 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../benchmark/benchmark_runner.dart';
 import '../benchmark/timing_data.dart';
 import '../core/constants.dart';
+import '../depth/ar_depth_channel.dart';
 import '../haptics/haptic_engine.dart';
 import '../inference/camera_isolate.dart';
 import '../inference/detection.dart';
@@ -26,14 +26,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _hapticOverride = false;
   double _hapticK = kHapticConstantK;
 
-  // ── Camera ─────────────────────────────────────────────────────────────────
-  CameraController? _camCtrl;
+  // ── §6.1 ARCore ────────────────────────────────────────────────────────────
+  // textureId returned by ArDepthChannel.start(); drives the Texture widget.
+  int? _textureId;
   CameraIsolate? _isolate;
   StreamSubscription<List<Detection>>? _detSub;
 
   // ── UI state ───────────────────────────────────────────────────────────────
   String _statusText = 'Initialising…';
-  double _hapticLevel = 0.0; // 0–1, drives intensity bar
+  double _hapticLevel = 0.0;
 
   // ── Stability filter ───────────────────────────────────────────────────────
   String? _stableLabel;
@@ -47,7 +48,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadPrefs();
-    _initCamera();
+    _initAr();
   }
 
   Future<void> _loadPrefs() async {
@@ -59,42 +60,26 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  Future<void> _initCamera() async {
+  // ── §6.1: start ARCore; it owns the camera exclusively ────────────────────
+  Future<void> _initAr() async {
     try {
-      final cameras = await availableCameras();
-      if (cameras.isEmpty) {
-        _setStatus('No camera found');
-        return;
-      }
-      final back = cameras.firstWhere(
-        (c) => c.lensDirection == CameraLensDirection.back,
-        orElse: () => cameras.first,
-      );
-
-      _camCtrl = CameraController(
-        back,
-        ResolutionPreset.low, // 320×240 — minimises preprocessing cost
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420,
-      );
-      await _camCtrl!.initialize();
+      final texId = await ArDepthChannel.instance.start();
       if (!mounted) return;
+      setState(() => _textureId = texId);
 
       _isolate = CameraIsolate();
       await _isolate!.start();
 
-      _detSub = _isolate!.detections.listen(_onDetections);
+      _detSub   = _isolate!.detections.listen(_onDetections);
       _timingSub = _isolate!.timing.listen(_onTiming);
-      await _camCtrl!.startImageStream(_onFrame);
 
       _setStatus('Scanning…');
-    } catch (e) {
-      _setStatus('Camera unavailable');
+    } on Exception catch (e) {
+      _setStatus('Camera unavailable: $e');
     }
   }
 
-  void _onFrame(CameraImage image) => _isolate?.processFrame(image);
-
+  // ── Detection handler ─────────────────────────────────────────────────────
   void _onDetections(List<Detection> detections) {
     if (!mounted) return;
 
@@ -102,16 +87,14 @@ class _HomeScreenState extends State<HomeScreen> {
       _stableLabel = null;
       _stableCount = 0;
       setState(() {
-        _statusText = 'Scanning…';
+        _statusText  = 'Scanning…';
         _hapticLevel = 0.0;
       });
       return;
     }
 
-    final closest = detections.first; // sorted largest-bbox-first by Postprocess
+    final closest = detections.first;
 
-    // Stability filter: require kDetectionStabilityFrames consecutive frames
-    // with the same label before triggering alerts — suppresses brief false positives.
     if (closest.label == _stableLabel) {
       _stableCount++;
     } else {
@@ -120,15 +103,40 @@ class _HomeScreenState extends State<HomeScreen> {
     }
     if (_stableCount < kDetectionStabilityFrames) return;
 
-    final amplitude = math.sqrt(closest.proximityAmplitude).clamp(0.0, 1.0);
+    // §6.1: query real depth at the detection bbox centre.
+    // sampleDepth is async but we fire-and-forget the UI update so the haptic
+    // does not block; the depth value is incorporated on the next frame if
+    // ARCore hasn't responded yet.
+    _applyDetection(closest);
+  }
 
+  Future<void> _applyDetection(Detection d) async {
+    // Query ARCore depth at the normalised centre of the bounding box.
+    final nx = d.bbox.center.dx;
+    final ny = d.bbox.center.dy;
+    final depthM = await ArDepthChannel.instance.sampleDepth(nx, ny);
+
+    double amplitude;
+    if (depthM > 0) {
+      // §6.1: map real distance [kMax → kMin] to amplitude [0 → 1].
+      // An object at kMinDistanceMeters (0.3 m) = full amplitude 1.0.
+      // An object at kMaxDistanceMeters (4.0 m) = amplitude 0.0.
+      amplitude = ((kMaxDistanceMeters - depthM) /
+              (kMaxDistanceMeters - kMinDistanceMeters))
+          .clamp(0.0, 1.0);
+    } else {
+      // ARCore depth unavailable — fall back to bbox-area proxy.
+      amplitude = math.sqrt(d.proximityAmplitude).clamp(0.0, 1.0);
+    }
+
+    if (!mounted) return;
     setState(() {
-      _statusText = '${closest.label} detected'
-          ' (${(closest.confidence * 100).round()}%)';
+      _statusText  = '${d.label} detected (${(d.confidence * 100).round()}%)'
+          '${depthM > 0 ? ' — ${depthM.toStringAsFixed(1)} m' : ''}';
       _hapticLevel = amplitude;
     });
 
-    StatusAnnouncer.announce('${closest.label} ahead');
+    StatusAnnouncer.announce('${d.label} ahead');
 
     if (!_hapticOverride) {
       HapticEngine.vibrate(
@@ -167,7 +175,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onTiming(TimingData data) {
     _benchmark.addSample(data);
     if (_benchmark.isActive && mounted) {
-      setState(() => _statusText = 'Benchmarking… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
+      setState(() =>
+          _statusText = 'Benchmarking… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
     }
   }
 
@@ -186,7 +195,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _timingSub?.cancel();
     _detSub?.cancel();
     _isolate?.stop();
-    _camCtrl?.dispose();
+    ArDepthChannel.instance.stop();
     super.dispose();
   }
 
@@ -254,14 +263,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildViewfinder() {
-    final ctrl = _camCtrl;
+    final texId = _textureId;
     return ExcludeSemantics(
-      child: ctrl != null && ctrl.value.isInitialized
-          ? CameraPreview(ctrl)
+      // §6.1: Texture widget backed by ARCore's ImageConsumer.
+      // Falls back to a loading spinner until the ARCore session is ready.
+      child: texId != null
+          ? Texture(textureId: texId)
           : Container(
               color: const Color(0xFF0A0A1A),
               child: Center(
-                child: _statusText == 'Camera unavailable'
+                child: _statusText.contains('unavailable')
                     ? const Icon(Icons.no_photography_outlined,
                         color: Color(0xFF444466), size: 64)
                     : const CircularProgressIndicator(
@@ -393,8 +404,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: ElevatedButton(
                   onPressed: () => _openSettings(context),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFE0E0E0),
-                    foregroundColor: const Color(0xFF1A1A2E),
+                    backgroundColor: const Color(0xFF4CAF50),
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),

@@ -39,6 +39,10 @@ android {
     }
 }
 
+dependencies {
+    implementation("com.google.ar:core:1.44.0")
+}
+
 flutter {
     source = "../.."
 }

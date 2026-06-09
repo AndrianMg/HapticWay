@@ -1,35 +1,38 @@
 import 'dart:async';
 import 'dart:isolate';
 
-import 'package:camera/camera.dart';
 import 'package:flutter/services.dart';
 
 import '../benchmark/timing_data.dart';
+import '../depth/ar_depth_channel.dart';
 import 'detection.dart';
 import 'frame_preprocessor.dart';
 import 'tflite_runner.dart';
 
-// Manages a long-running background isolate that runs TFLite inference.
-// The camera stream stays on the main isolate; only preprocessed pixel
-// data crosses the isolate boundary — never raw frames, never images.
+/// Manages a long-running background isolate that runs TFLite inference.
+///
+/// §6.1 change: camera frames now come from [ArDepthChannel.frameStream]
+/// (ARCore EventChannel) instead of the Flutter camera plugin image stream.
+/// The isolate boundary contract is unchanged — only preprocessed pixel data
+/// crosses; the YUV bytes are copied once into [_FrameMsg] before sending.
 class CameraIsolate {
   Isolate? _isolate;
   SendPort? _toIsolate;
   bool _busy = false;
+  StreamSubscription<Map<String, dynamic>>? _frameSub;
 
-  final _detectionController =
-      StreamController<List<Detection>>.broadcast();
-  final _timingController =
-      StreamController<TimingData>.broadcast();
+  final _detectionController = StreamController<List<Detection>>.broadcast();
+  final _timingController    = StreamController<TimingData>.broadcast();
 
   Stream<List<Detection>> get detections => _detectionController.stream;
-  Stream<TimingData> get timing => _timingController.stream;
+  Stream<TimingData>      get timing     => _timingController.stream;
 
   Future<void> start() async {
-    // Load assets here on the main isolate — rootBundle is unavailable in background isolates.
-    final modelData = await rootBundle.load('assets/models/hapticway_custom.tflite');
+    // Load model assets on the main isolate — rootBundle is unavailable
+    // in background isolates (constraint established in §5.2).
+    final modelData  = await rootBundle.load('assets/models/hapticway_custom.tflite');
     final modelBytes = modelData.buffer.asUint8List();
-    final labelsRaw = await rootBundle.loadString('assets/labels/hapticway_labels.txt');
+    final labelsRaw  = await rootBundle.loadString('assets/labels/hapticway_labels.txt');
     final labels = labelsRaw
         .split('\n')
         .map((l) => l.trim())
@@ -58,35 +61,36 @@ class CameraIsolate {
         _detectionController.add(detections);
         _timingController.add(TimingData(
           preprocessMs: msg['preprocess_ms'] as int,
-          inferMs: msg['infer_ms'] as int,
+          inferMs:      msg['infer_ms']      as int,
         ));
         _busy = false;
       }
     });
 
     await completer.future;
+
+    // Subscribe to ARCore frame stream — replaces CameraController.startImageStream.
+    _frameSub = ArDepthChannel.instance.frameStream.listen(_onArFrame);
   }
 
-  // Called from the camera image stream callback on the main isolate.
-  // Drops the frame silently if inference is still running.
-  void processFrame(CameraImage image) {
+  void _onArFrame(Map<String, dynamic> frame) {
     if (_toIsolate == null || _busy) return;
-    if (image.planes.length < 3) return;
-
     _busy = true;
     _toIsolate!.send(_FrameMsg(
-      y: Uint8List.fromList(image.planes[0].bytes),
-      u: Uint8List.fromList(image.planes[1].bytes),
-      v: Uint8List.fromList(image.planes[2].bytes),
-      width: image.width,
-      height: image.height,
-      yRowStride: image.planes[0].bytesPerRow,
-      uvRowStride: image.planes[1].bytesPerRow,
-      uvPixelStride: image.planes[1].bytesPerPixel ?? 1,
+      y:             frame['y']             as Uint8List,
+      u:             frame['u']             as Uint8List,
+      v:             frame['v']             as Uint8List,
+      width:         frame['width']         as int,
+      height:        frame['height']        as int,
+      yRowStride:    frame['yRowStride']    as int,
+      uvRowStride:   frame['uvRowStride']   as int,
+      uvPixelStride: frame['uvPixelStride'] as int,
     ));
   }
 
   Future<void> stop() async {
+    await _frameSub?.cancel();
+    _frameSub = null;
     _isolate?.kill(priority: Isolate.immediate);
     _isolate = null;
     _toIsolate = null;
@@ -96,7 +100,7 @@ class CameraIsolate {
   }
 }
 
-// ── Isolate entry ──────────────────────────────────────────────────────────
+// ── Isolate entry ─────────────────────────────────────────────────────────────
 
 class _IsolateArgs {
   final RootIsolateToken token;
@@ -139,13 +143,13 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
 
       final prepSw = Stopwatch()..start();
       final rgb = FramePreprocessor.process(
-        yPlane: msg.y,
-        uPlane: msg.u,
-        vPlane: msg.v,
-        width: msg.width,
-        height: msg.height,
-        yRowStride: msg.yRowStride,
-        uvRowStride: msg.uvRowStride,
+        yPlane:       msg.y,
+        uPlane:       msg.u,
+        vPlane:       msg.v,
+        width:        msg.width,
+        height:       msg.height,
+        yRowStride:   msg.yRowStride,
+        uvRowStride:  msg.uvRowStride,
         uvPixelStride: msg.uvPixelStride,
       );
       final prepMs = (prepSw..stop()).elapsedMilliseconds;
@@ -155,9 +159,9 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
       final inferMs = (inferSw..stop()).elapsedMilliseconds;
 
       args.sendPort.send({
-        'detections': detections.map((d) => d.toMap()).toList(),
+        'detections':    detections.map((d) => d.toMap()).toList(),
         'preprocess_ms': prepMs,
-        'infer_ms': inferMs,
+        'infer_ms':      inferMs,
       });
     }
   }
