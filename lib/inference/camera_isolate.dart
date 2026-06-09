@@ -27,11 +27,9 @@ class CameraIsolate {
 
   Future<void> start() async {
     // Load assets here on the main isolate — rootBundle is unavailable in background isolates.
-    // §5.6: swap to 'assets/models/hapticway_custom.tflite' + 'assets/labels/hapticway_labels.txt'
-    // once the trained model is downloaded from Colab and placed in assets/models/.
-    final modelData = await rootBundle.load('assets/models/ssd_mobilenet_v2_int8.tflite');
+    final modelData = await rootBundle.load('assets/models/hapticway_custom.tflite');
     final modelBytes = modelData.buffer.asUint8List();
-    final labelsRaw = await rootBundle.loadString('assets/labels/coco_labels_filtered.txt');
+    final labelsRaw = await rootBundle.loadString('assets/labels/hapticway_labels.txt');
     final labels = labelsRaw
         .split('\n')
         .map((l) => l.trim())
