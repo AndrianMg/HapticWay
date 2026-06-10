@@ -60,8 +60,9 @@ class ArDepthChannel(
     private var eglCtx: EGLContext     = EGL14.EGL_NO_CONTEXT
     private var cameraTexId = 0
 
-    // Flutter preview texture (ImageConsumer accepts android.media.Image directly)
-    private var imageConsumer: TextureRegistry.ImageConsumer? = null
+    // Flutter preview texture — ImageTextureEntry is the Flutter 3.10+ API
+    // that accepts android.media.Image directly via pushImage().
+    private var imageConsumer: TextureRegistry.ImageTextureEntry? = null
 
     // Inference frame stream
     private var frameSink: EventChannel.EventSink? = null
@@ -248,7 +249,7 @@ class ArDepthChannel(
         loopThread?.join(1000)
         loopThread = null; loopHandler = null
         session?.pause(); session?.close(); session = null
-        imageConsumer?.close(); imageConsumer = null
+        imageConsumer?.release(); imageConsumer = null
         releaseEgl()
         depthData = null
     }
