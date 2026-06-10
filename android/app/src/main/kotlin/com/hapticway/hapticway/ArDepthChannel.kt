@@ -12,6 +12,10 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.Looper
+import android.util.DisplayMetrics
+import android.view.Surface
+import android.view.WindowManager
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Frame
@@ -113,36 +117,60 @@ class ArDepthChannel(
                 result.error("AR_UNAVAILABLE", avail.name, null); return
             }
 
-            // 1. EGL offscreen context (1×1 pbuffer — just needs to be current for glGenTextures)
-            setupEgl()
-
-            // 2. ARCore session with automatic depth
-            val s = Session(context)
-            s.configure(Config(s).apply {
-                depthMode            = Config.DepthMode.AUTOMATIC
-                updateMode           = Config.UpdateMode.LATEST_CAMERA_IMAGE
-                focusMode            = Config.FocusMode.AUTO
-                lightEstimationMode  = Config.LightEstimationMode.DISABLED
-                planeFindingMode     = Config.PlaneFindingMode.DISABLED
-            })
-            s.setCameraTextureName(cameraTexId)
-            s.resume()
-            session = s
-
-            // 3. Flutter ImageConsumer for camera preview in Texture widget
+            // Flutter ImageTextureEntry must be created on the platform thread.
             val ic = textureRegistry.createImageTexture()
             imageConsumer = ic
 
-            // 4. Frame loop on background thread
+            // Start the background thread before any EGL/GL work.
             val t = HandlerThread("ar-depth-loop")
             t.start()
             val h = Handler(t.looper)
             loopThread = t
             loopHandler = h
-            running = true
-            h.post(::frameLoop)
 
-            result.success(ic.id())
+            val mainHandler = Handler(Looper.getMainLooper())
+
+            // EGL context must be created AND made current on the same thread that
+            // will call session.update(). Post all GL + ARCore setup to the HandlerThread
+            // so eglMakeCurrent() binds the context there, not on the calling thread.
+            h.post {
+                try {
+                    setupEgl()
+
+                    val s = Session(context)
+                    s.configure(Config(s).apply {
+                        depthMode           = Config.DepthMode.AUTOMATIC
+                        updateMode          = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                        focusMode           = Config.FocusMode.AUTO
+                        lightEstimationMode = Config.LightEstimationMode.DISABLED
+                        planeFindingMode    = Config.PlaneFindingMode.DISABLED
+                    })
+                    s.setCameraTextureName(cameraTexId)
+                    s.resume()
+
+                    // ARCore needs valid display geometry to configure its image pipeline.
+                    // Without it the CPU image manager logs "invalid width: 0" and may
+                    // refuse to acquire camera images.
+                    @Suppress("DEPRECATION")
+                    val dm = DisplayMetrics().also {
+                        (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager)
+                            .defaultDisplay.getRealMetrics(it)
+                    }
+                    s.setDisplayGeometry(Surface.ROTATION_0, dm.widthPixels, dm.heightPixels)
+
+                    session = s
+                    running = true
+
+                    // Reply to MethodChannel on the main thread (required by Flutter).
+                    mainHandler.post { result.success(ic.id()) }
+
+                    frameLoop()
+                } catch (e: Exception) {
+                    mainHandler.post {
+                        result.error("AR_START_ERROR", "${e.javaClass.simpleName}: ${e.message}", null)
+                    }
+                }
+            }
         } catch (e: Exception) {
             result.error("AR_START_ERROR", "${e.javaClass.simpleName}: ${e.message}", null)
         }
@@ -172,18 +200,17 @@ class ArDepthChannel(
                 }
             }
 
-            // Camera image — used for both preview display and inference
+            // Camera image — used for inference only.
+            // Images must be closed immediately after the YUV bytes are copied;
+            // deferring close() via pushImage() keeps the buffer "outstanding" from
+            // ARCore's perspective and exhausts the pool (ResourceExhaustedException).
             val img: Image? = try {
                 frame.acquireCameraImage()
             } catch (_: NotYetAvailableException) { null }
+              catch (_: com.google.ar.core.exceptions.ResourceExhaustedException) { null }
 
             if (img != null) {
-                // Send YUV bytes to Dart for TFLite inference
-                sendInferenceFrame(img)
-                // Push image to Flutter texture for camera preview display.
-                // ImageConsumer.pushImage() retains the image until the next push;
-                // we must NOT close img ourselves after this call.
-                imageConsumer?.pushImage(img) ?: img.close()
+                img.use { sendInferenceFrame(it) }  // closes img when sendInferenceFrame returns
             }
 
         } catch (_: SessionPausedException) {
@@ -245,12 +272,15 @@ class ArDepthChannel(
     fun stop() {
         running = false
         loopHandler?.removeCallbacksAndMessages(null)
+        // releaseEgl() calls glDeleteTextures and eglMakeCurrent — must run on the
+        // HandlerThread where the EGL context is current. quitSafely() drains the
+        // queue (including this post) before stopping the thread.
+        loopHandler?.post { releaseEgl() }
         loopThread?.quitSafely()
         loopThread?.join(1000)
         loopThread = null; loopHandler = null
         session?.pause(); session?.close(); session = null
         imageConsumer?.release(); imageConsumer = null
-        releaseEgl()
         depthData = null
     }
 
