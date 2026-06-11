@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,7 +7,8 @@ import '../benchmark/benchmark_runner.dart';
 import '../benchmark/timing_data.dart';
 import '../core/constants.dart';
 import '../depth/ar_depth_channel.dart';
-import '../haptics/haptic_engine.dart';
+import '../haptics/intensity_curve.dart';
+import '../haptics/tacton.dart';
 import '../inference/camera_isolate.dart';
 import '../inference/detection.dart';
 import 'settings_screen.dart';
@@ -46,6 +46,12 @@ class _HomeScreenState extends State<HomeScreen> {
   double _smoothConf  = 0.0;
   double _smoothDepth = 0.0;
 
+  // ── §6.2 depth-poll haptic radar ───────────────────────────────────────────
+  // Samples the centre of the frame every 300 ms so the haptic fires even when
+  // YOLO detects nothing (e.g. walking toward a plain wall).
+  Timer? _depthPollTimer;
+  bool _depthPollBusy = false;
+
   // ── Benchmark ──────────────────────────────────────────────────────────────
   final _benchmark = BenchmarkRunner();
   StreamSubscription<TimingData>? _timingSub;
@@ -80,8 +86,37 @@ class _HomeScreenState extends State<HomeScreen> {
       _timingSub = _isolate!.timing.listen(_onTiming);
 
       _setStatus('Scanning…');
+
+      _depthPollTimer = Timer.periodic(
+        const Duration(milliseconds: 300),
+        (_) => _pollDepth(),
+      );
     } on Exception catch (e) {
       _setStatus('Camera unavailable: $e');
+    }
+  }
+
+  // ── §6.2 depth-poll haptic radar ──────────────────────────────────────────
+  // Runs every 300 ms independently of YOLO detection so the haptic fires for
+  // any surface in the centre of the frame (walls, floors, plain obstacles).
+  Future<void> _pollDepth() async {
+    if (!mounted || _depthPollBusy) return;
+    _depthPollBusy = true;
+    try {
+      final depthM = await ArDepthChannel.instance
+          .sampleDepth(0.35, 0.35, 0.65, 0.65);
+      if (!mounted) return;
+      if (depthM <= 0) {
+        if (_hapticLevel > 0) setState(() => _hapticLevel = 0.0);
+        return;
+      }
+      final amplitude = IntensityCurve.amplitudeFor(depthM, k: _hapticK);
+      setState(() => _hapticLevel = amplitude);
+      if (!_hapticOverride && depthM < kMaxDistanceMeters) {
+        Tacton.obstacleAhead(amplitude);
+      }
+    } finally {
+      _depthPollBusy = false;
     }
   }
 
@@ -92,10 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (detections.isEmpty) {
       _stableLabel = null;
       _stableCount = 0;
-      setState(() {
-        _statusText  = 'Scanning…';
-        _hapticLevel = 0.0;
-      });
+      setState(() => _statusText = 'Scanning…');
       return;
     }
 
@@ -117,6 +149,8 @@ class _HomeScreenState extends State<HomeScreen> {
     _applyDetection(closest);
   }
 
+  // Updates status text with the detected object label and its bbox depth.
+  // Haptic intensity is driven by _pollDepth, not here.
   Future<void> _applyDetection(Detection d) async {
     _applyBusy = true;
     try {
@@ -131,30 +165,13 @@ class _HomeScreenState extends State<HomeScreen> {
             : depthM;
       }
 
-      double amplitude;
-      if (_smoothDepth > 0) {
-        amplitude = ((kMaxDistanceMeters - _smoothDepth) /
-                (kMaxDistanceMeters - kMinDistanceMeters))
-            .clamp(0.0, 1.0);
-      } else {
-        amplitude = math.sqrt(d.proximityAmplitude).clamp(0.0, 1.0);
-      }
-
       if (!mounted) return;
       setState(() {
         _statusText = '${d.label} detected (${(_smoothConf * 100).round()}%)'
             '${_smoothDepth > 0 ? ' — ${_smoothDepth.toStringAsFixed(1)} m' : ''}';
-        _hapticLevel = amplitude;
       });
 
       StatusAnnouncer.announce('${d.label} ahead');
-
-      if (!_hapticOverride) {
-        HapticEngine.vibrate(
-          amplitude * _hapticK.clamp(0.0, 1.0),
-          const Duration(milliseconds: 200),
-        );
-      }
     } finally {
       _applyBusy = false;
     }
@@ -172,6 +189,11 @@ class _HomeScreenState extends State<HomeScreen> {
     StatusAnnouncer.announce(
       _hapticOverride ? 'Haptic alerts disabled' : 'Haptic alerts enabled',
     );
+    if (_hapticOverride) {
+      await Tacton.manualOverrideOn();
+    } else {
+      await Tacton.manualOverrideOff();
+    }
   }
 
   void _openSettings(BuildContext context) {
@@ -206,6 +228,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _depthPollTimer?.cancel();
     _timingSub?.cancel();
     _detSub?.cancel();
     _isolate?.stop();
