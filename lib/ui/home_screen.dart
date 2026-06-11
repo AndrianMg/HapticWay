@@ -11,6 +11,7 @@ import '../haptics/intensity_curve.dart';
 import '../haptics/tacton.dart';
 import '../inference/camera_isolate.dart';
 import '../inference/detection.dart';
+import '../research/woz_screen.dart';
 import 'settings_screen.dart';
 import 'widgets/status_announcer.dart';
 
@@ -51,6 +52,13 @@ class _HomeScreenState extends State<HomeScreen> {
   // YOLO detects nothing (e.g. walking toward a plain wall).
   Timer? _depthPollTimer;
   bool _depthPollBusy = false;
+
+  // ── §6.4 hidden WoZ panel ──────────────────────────────────────────────────
+  // 3-finger long press (800 ms) anywhere on the screen opens the researcher
+  // panel. Tracked via raw pointer events — GestureDetector has no multi-touch
+  // long-press recognizer.
+  final Set<int> _activePointers = {};
+  Timer? _wozTrigger;
 
   // ── Benchmark ──────────────────────────────────────────────────────────────
   final _benchmark = BenchmarkRunner();
@@ -196,6 +204,38 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // ── §6.4 WoZ panel activation ─────────────────────────────────────────────
+  void _onPointerDown(PointerDownEvent e) {
+    _activePointers.add(e.pointer);
+    if (_activePointers.length == 3) {
+      _wozTrigger?.cancel();
+      _wozTrigger = Timer(const Duration(milliseconds: 800), _openWoz);
+    }
+  }
+
+  void _onPointerEnd(int pointer) {
+    _activePointers.remove(pointer);
+    if (_activePointers.length < 3) _wozTrigger?.cancel();
+  }
+
+  Future<void> _openWoz() async {
+    _activePointers.clear();
+    if (!mounted) return;
+    // Pause the real depth radar so simulated events aren't contaminated by
+    // real-depth vibrations during a WoZ session.
+    _depthPollTimer?.cancel();
+    _depthPollTimer = null;
+    await Navigator.push(
+      context,
+      MaterialPageRoute<void>(builder: (_) => const WozScreen()),
+    );
+    if (!mounted) return;
+    _depthPollTimer = Timer.periodic(
+      const Duration(milliseconds: 300),
+      (_) => _pollDepth(),
+    );
+  }
+
   void _openSettings(BuildContext context) {
     Navigator.push<bool>(
       context,
@@ -228,6 +268,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _wozTrigger?.cancel();
     _depthPollTimer?.cancel();
     _timingSub?.cancel();
     _detSub?.cancel();
@@ -242,17 +283,25 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1A1A2E),
-      body: FocusTraversalGroup(
-        policy: OrderedTraversalPolicy(),
-        child: SafeArea(
-          child: Column(
-            children: [
-              _buildHeader(context),
-              Expanded(child: _buildViewfinder()),
-              _buildStatusCard(),
-              _buildIntensityBar(),
-              _buildControls(context),
-            ],
+      // §6.4: raw pointer tracking for the hidden 3-finger long press.
+      // Translucent so normal taps still reach the buttons underneath.
+      body: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: _onPointerDown,
+        onPointerUp: (e) => _onPointerEnd(e.pointer),
+        onPointerCancel: (e) => _onPointerEnd(e.pointer),
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(),
+          child: SafeArea(
+            child: Column(
+              children: [
+                _buildHeader(context),
+                Expanded(child: _buildViewfinder()),
+                _buildStatusCard(),
+                _buildIntensityBar(),
+                _buildControls(context),
+              ],
+            ),
           ),
         ),
       ),
