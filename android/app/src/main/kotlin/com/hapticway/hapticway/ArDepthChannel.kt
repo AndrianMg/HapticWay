@@ -69,13 +69,15 @@ class ArDepthChannel(
         """
 
         // Fullscreen triangle-strip quad.
-        // Texture coords rotate 90° CW to match portrait display / landscape sensor.
+        // S20 Ultra sensor orientation = 90° CW; compensate with 90° CCW UV mapping.
+        // u = (1 - screenY) / 2  →  decreases as screen goes upward
+        // v = (1 + screenX) / 2  →  increases as screen goes rightward
         // Layout per vertex: posX, posY, uvX, uvY
         private val QUAD = floatArrayOf(
-            -1f, -1f,  0f, 1f,
-             1f, -1f,  0f, 0f,
-            -1f,  1f,  1f, 1f,
-             1f,  1f,  1f, 0f,
+            -1f, -1f,  1f, 1f,
+             1f, -1f,  1f, 0f,
+            -1f,  1f,  0f, 1f,
+             1f,  1f,  0f, 0f,
         )
     }
 
@@ -106,9 +108,11 @@ class ArDepthChannel(
     private var previewH = 0
 
     // EventChannel sink for YUV inference frames
-    private var frameSink: EventChannel.EventSink? = null
+    // Written on platform thread (onListen), read on HandlerThread — must be volatile.
+    @Volatile private var frameSink: EventChannel.EventSink? = null
 
     // Background thread for ARCore frame loop
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var loopThread: HandlerThread? = null
     private var loopHandler: Handler? = null
     @Volatile private var running = false
@@ -133,9 +137,11 @@ class ArDepthChannel(
             "start"       -> start(result)
             "stop"        -> { stop(); result.success(null) }
             "sampleDepth" -> {
-                val nx = (call.argument<Any>("nx") as Number).toFloat()
-                val ny = (call.argument<Any>("ny") as Number).toFloat()
-                result.success(sampleDepth(nx, ny))
+                val x1 = (call.argument<Any>("x1") as Number).toFloat()
+                val y1 = (call.argument<Any>("y1") as Number).toFloat()
+                val x2 = (call.argument<Any>("x2") as Number).toFloat()
+                val y2 = (call.argument<Any>("y2") as Number).toFloat()
+                result.success(sampleDepth(x1, y1, x2, y2))
             }
             else -> result.notImplemented()
         }
@@ -218,8 +224,9 @@ class ArDepthChannel(
         try {
             val frame = s.update()  // ARCore writes latest camera frame into cameraTexId OES texture
 
-            // Blit OES texture → EGL window surface → Flutter SurfaceTexture → Texture widget
-            renderPreview()
+            // Blit OES texture → EGL window surface → Flutter SurfaceTexture → Texture widget.
+            // Isolated so a GL error never skips the inference path below.
+            try { renderPreview() } catch (_: Exception) {}
 
             // Depth (only available while ARCore is tracking the environment)
             if (frame.camera.trackingState == TrackingState.TRACKING) {
@@ -288,42 +295,52 @@ class ArDepthChannel(
 
     private fun sendInferenceFrame(img: Image) {
         val sink = frameSink ?: return
+        // Copy pixel data on the HandlerThread (img is still open inside img.use{}).
+        // EventSink.success() must run on the platform thread — post after copying.
         val p0 = img.planes[0]; val p1 = img.planes[1]; val p2 = img.planes[2]
         fun readPlane(p: Image.Plane): ByteArray =
             ByteArray(p.buffer.remaining()).also { p.buffer.get(it) }
-        sink.success(mapOf(
-            "y"             to readPlane(p0),
-            "u"             to readPlane(p1),
-            "v"             to readPlane(p2),
-            "width"         to img.width,
-            "height"        to img.height,
-            "yRowStride"    to p0.rowStride,
-            "uvRowStride"   to p1.rowStride,
-            "uvPixelStride" to p1.pixelStride,
-        ))
+        val y  = readPlane(p0); val u = readPlane(p1); val v = readPlane(p2)
+        val w  = img.width;     val h = img.height
+        val ys = p0.rowStride;  val uvs = p1.rowStride; val uvp = p1.pixelStride
+        mainHandler.post {
+            sink.success(mapOf(
+                "y" to y, "u" to u, "v" to v,
+                "width" to w, "height" to h,
+                "yRowStride" to ys, "uvRowStride" to uvs, "uvPixelStride" to uvp,
+            ))
+        }
     }
 
     // ── Depth sampling ────────────────────────────────────────────────────────
 
     /**
-     * Sample depth at a normalised image coordinate (0–1, 0–1).
-     * Returns distance in metres, or -1.0 if unavailable / low confidence.
+     * Scan the depth image over the bbox region (normalised coords 0–1) and
+     * return the MINIMUM valid depth in metres, or -1.0 if unavailable.
      *
-     * ARCore Raw Depth16 encoding:
-     *   bits  0-12 : depth in millimetres
-     *   bits 13-15 : confidence (0 = invalid, 7 = highest)
+     * Using min rather than the bbox centre avoids reading background when the
+     * detection bbox includes far-away context (e.g. a person's torso behind
+     * an outstretched hand).  The closest valid pixel is the obstacle distance.
+     *
+     * acquireDepthImage16Bits() format: plain 16-bit unsigned mm, 0 = no data.
+     * (acquireRawDepthImage16Bits() packs confidence in bits 13-15 — different API.)
      */
-    fun sampleDepth(nx: Float, ny: Float): Double {
+    fun sampleDepth(nx1: Float, ny1: Float, nx2: Float, ny2: Float): Double {
         val data = depthData ?: return -1.0
-        val px = (nx * depthW).toInt().coerceIn(0, depthW - 1)
-        val py = (ny * depthH).toInt().coerceIn(0, depthH - 1)
-        val idx = py * depthW + px
-        if (idx >= data.size) return -1.0
-        val raw  = data[idx].toInt() and 0xFFFF
-        val mm   = raw and 0x1FFF
-        val conf = (raw ushr 13) and 0x7
-        if (conf == 0 || mm == 0) return -1.0
-        return mm / 1000.0
+        val px1 = (nx1 * depthW).toInt().coerceIn(0, depthW - 1)
+        val py1 = (ny1 * depthH).toInt().coerceIn(0, depthH - 1)
+        val px2 = (nx2 * depthW).toInt().coerceIn(0, depthW - 1)
+        val py2 = (ny2 * depthH).toInt().coerceIn(0, depthH - 1)
+        // acquireDepthImage16Bits() uses plain 16-bit mm — no confidence packing.
+        // 0 = no depth estimate available; nonzero = depth in millimetres.
+        var minMm = Int.MAX_VALUE
+        for (row in py1..py2) {
+            for (col in px1..px2) {
+                val mm = data[row * depthW + col].toInt() and 0xFFFF
+                if (mm >= 200 && mm < minMm) minMm = mm
+            }
+        }
+        return if (minMm == Int.MAX_VALUE) -1.0 else minMm / 1000.0
     }
 
     // ── Stop ──────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 // Converts an Android YUV_420_888 camera frame to a flat RGB Uint8List
-// of exactly 320 × 320 × 3 bytes, suitable for EfficientDet-Lite0 input.
+// of exactly 320 × 320 × 3 bytes (NHWC, matching the YOLOv8n model input).
 // All operations reuse pre-allocated buffers — no per-frame heap allocation.
 class FramePreprocessor {
   static const int modelSize = 320;
@@ -43,7 +43,7 @@ class FramePreprocessor {
       }
     }
 
-    // Step 2: Nearest-neighbour resize → 300 × 300.
+    // Step 2: Nearest-neighbour resize → 320 × 320.
     final xRatio = width / modelSize;
     final yRatio = height / modelSize;
     int outIdx = 0;

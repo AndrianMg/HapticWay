@@ -10,6 +10,8 @@ class TfliteRunner {
   bool _ready = false;
   bool _outputTransposed = false; // true when output is [1, anchors, rows]
   bool _inputIsFloat = false;    // Ultralytics INT8 export keeps float32 input
+  bool _inputIsNchw  = false;    // true when input is [1, 3, H, W] (channel-first)
+  int  _inH = 0, _inW = 0;
 
   bool get isReady => _ready;
 
@@ -22,16 +24,24 @@ class TfliteRunner {
       _interpreter!.allocateTensors();
 
       final inTensor  = _interpreter!.getInputTensor(0);
+      final inShape   = inTensor.shape;   // [1, H, W, 3] or [1, 3, H, W]
       final outShape  = _interpreter!.getOutputTensor(0).shape;
       _inputIsFloat   = inTensor.type == TensorType.float32;
+
+      // Detect NCHW [1, 3, H, W] vs NHWC [1, H, W, 3] by checking dim 1.
+      // C=3 in dim 1 → NCHW; C=3 in dim 3 → NHWC.
+      _inputIsNchw = inShape.length == 4 && inShape[1] == 3;
+      _inH = _inputIsNchw ? inShape[2] : inShape[1];
+      _inW = _inputIsNchw ? inShape[3] : inShape[2];
+
       // YOLOv8 output is either [1, 4+N, anchors] or [1, anchors, 4+N].
       // For imgsz=320, anchors=2100 >> 4+N (≤12), so the larger dim is anchors.
       _outputTransposed = outShape[1] > outShape[2];
       _ready = true;
 
       debugPrint(
-        'TFLite: ready  in=${inTensor.shape}(${inTensor.type.name})'
-        '  out=$outShape  transposed=$_outputTransposed',
+        'TFLite: ready  in=$inShape(${inTensor.type.name})'
+        '  nchw=$_inputIsNchw  out=$outShape  transposed=$_outputTransposed',
       );
     } catch (e) {
       _ready = false;
@@ -46,39 +56,65 @@ class TfliteRunner {
     final dim1 = outShape[1];
     final dim2 = outShape[2];
 
-    final rawOutput = List.generate(
-      1, (_) => List.generate(dim1, (_) => List<double>.filled(dim2, 0.0)),
-    );
+    // Use flat ByteBuffer I/O — the fast path in tflite_flutter that avoids
+    // the slow nested-list recursion in the generic copyTo path.
+    final outFlat = Float32List(dim1 * dim2);
+
+    // Build the input ByteBuffer in the format the model expects.
+    // rgbInput is always HWC (row-major R,G,B per pixel from FramePreprocessor).
+    final Object inputBuffer;
+    if (_inputIsFloat) {
+      final inFloat = Float32List(rgbInput.length);
+      if (_inputIsNchw) {
+        // NCHW [1, 3, H, W]: write all R, then all G, then all B.
+        final hw = _inH * _inW;
+        for (int r = 0; r < _inH; r++) {
+          for (int c = 0; c < _inW; c++) {
+            final src = (r * _inW + c) * 3;
+            final dst = r * _inW + c;
+            inFloat[dst]          = rgbInput[src]     / 255.0; // R plane
+            inFloat[hw + dst]     = rgbInput[src + 1] / 255.0; // G plane
+            inFloat[2 * hw + dst] = rgbInput[src + 2] / 255.0; // B plane
+          }
+        }
+      } else {
+        // NHWC [1, H, W, 3]: HWC order matches directly.
+        for (int i = 0; i < rgbInput.length; i++) {
+          inFloat[i] = rgbInput[i] / 255.0;
+        }
+      }
+      inputBuffer = inFloat.buffer;
+    } else {
+      // Fully-quantised uint8 input: pass raw bytes directly.
+      // For NCHW uint8 we'd need to transpose too, but all known Ultralytics
+      // uint8 exports are NHWC, so skip that complexity for now.
+      inputBuffer = rgbInput.buffer;
+    }
 
     try {
-      if (_inputIsFloat) {
-        // Ultralytics INT8 export keeps float32 input despite the "INT8" label.
-        // Pass raw bytes via ByteBuffer — tflite_flutter's fast path that skips
-        // per-element conversion and copies the buffer directly into the tensor.
-        final float32Input = Float32List(rgbInput.length);
-        for (int i = 0; i < rgbInput.length; i++) {
-          float32Input[i] = rgbInput[i] / 255.0;
-        }
-        _interpreter!.run(float32Input.buffer, rawOutput);
-      } else {
-        _interpreter!.run(rgbInput, rawOutput);
-      }
+      _interpreter!.runForMultipleInputs(
+        [inputBuffer],
+        {0: outFlat.buffer},
+      );
     } catch (e) {
       debugPrint('TFLite: inference error: $e');
       return [];
     }
 
-    // parseYolo expects [rows][anchors] where rows = 4 + numClasses.
-    // If the model output is transposed ([anchors][rows]), fix it here.
+    // Build raw2d[rows][anchors] for parseYolo.
+    // outFlat layout: row-major [dim1][dim2] → outFlat[r * dim2 + a].
     final List<List<double>> raw2d;
     if (_outputTransposed) {
+      // Tensor is [1, anchors, rows] → transpose to [rows][anchors].
       final anchors = dim1;
       final rows    = dim2;
       raw2d = List.generate(
-        rows, (r) => List.generate(anchors, (a) => rawOutput[0][a][r]),
+        rows, (r) => List.generate(anchors, (a) => outFlat[a * rows + r].toDouble()),
       );
     } else {
-      raw2d = rawOutput[0];
+      raw2d = List.generate(
+        dim1, (r) => List.generate(dim2, (a) => outFlat[r * dim2 + a].toDouble()),
+      );
     }
 
     return Postprocess.parseYolo(raw: raw2d, labels: _labels);

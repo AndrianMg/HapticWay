@@ -40,6 +40,12 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _stableLabel;
   int _stableCount = 0;
 
+  // ── Detection display smoothing ────────────────────────────────────────────
+  // Prevents concurrent depth queries and smooths jittery confidence/distance.
+  bool _applyBusy = false;
+  double _smoothConf  = 0.0;
+  double _smoothDepth = 0.0;
+
   // ── Benchmark ──────────────────────────────────────────────────────────────
   final _benchmark = BenchmarkRunner();
   StreamSubscription<TimingData>? _timingSub;
@@ -98,51 +104,59 @@ class _HomeScreenState extends State<HomeScreen> {
     if (closest.label == _stableLabel) {
       _stableCount++;
     } else {
-      _stableLabel = closest.label;
-      _stableCount = 1;
+      _stableLabel  = closest.label;
+      _stableCount  = 1;
+      _smoothConf   = 0.0;
+      _smoothDepth  = 0.0;
     }
     if (_stableCount < kDetectionStabilityFrames) return;
 
-    // §6.1: query real depth at the detection bbox centre.
-    // sampleDepth is async but we fire-and-forget the UI update so the haptic
-    // does not block; the depth value is incorporated on the next frame if
-    // ARCore hasn't responded yet.
+    // Guard: skip if a depth query is already in flight — prevents concurrent
+    // setState calls that cause the chaotic percentage/distance jitter.
+    if (_applyBusy) return;
     _applyDetection(closest);
   }
 
   Future<void> _applyDetection(Detection d) async {
-    // Query ARCore depth at the normalised centre of the bounding box.
-    final nx = d.bbox.center.dx;
-    final ny = d.bbox.center.dy;
-    final depthM = await ArDepthChannel.instance.sampleDepth(nx, ny);
+    _applyBusy = true;
+    try {
+      final depthM = await ArDepthChannel.instance.sampleDepth(
+          d.bbox.left, d.bbox.top, d.bbox.right, d.bbox.bottom);
 
-    double amplitude;
-    if (depthM > 0) {
-      // §6.1: map real distance [kMax → kMin] to amplitude [0 → 1].
-      // An object at kMinDistanceMeters (0.3 m) = full amplitude 1.0.
-      // An object at kMaxDistanceMeters (4.0 m) = amplitude 0.0.
-      amplitude = ((kMaxDistanceMeters - depthM) /
-              (kMaxDistanceMeters - kMinDistanceMeters))
-          .clamp(0.0, 1.0);
-    } else {
-      // ARCore depth unavailable — fall back to bbox-area proxy.
-      amplitude = math.sqrt(d.proximityAmplitude).clamp(0.0, 1.0);
-    }
+      // EMA smoothing (α=0.3) — damps per-frame jitter in confidence and depth.
+      _smoothConf  = _smoothConf  * 0.7 + d.confidence * 0.3;
+      if (depthM > 0) {
+        _smoothDepth = (_smoothDepth > 0)
+            ? _smoothDepth * 0.7 + depthM * 0.3
+            : depthM;
+      }
 
-    if (!mounted) return;
-    setState(() {
-      _statusText  = '${d.label} detected (${(d.confidence * 100).round()}%)'
-          '${depthM > 0 ? ' — ${depthM.toStringAsFixed(1)} m' : ''}';
-      _hapticLevel = amplitude;
-    });
+      double amplitude;
+      if (_smoothDepth > 0) {
+        amplitude = ((kMaxDistanceMeters - _smoothDepth) /
+                (kMaxDistanceMeters - kMinDistanceMeters))
+            .clamp(0.0, 1.0);
+      } else {
+        amplitude = math.sqrt(d.proximityAmplitude).clamp(0.0, 1.0);
+      }
 
-    StatusAnnouncer.announce('${d.label} ahead');
+      if (!mounted) return;
+      setState(() {
+        _statusText = '${d.label} detected (${(_smoothConf * 100).round()}%)'
+            '${_smoothDepth > 0 ? ' — ${_smoothDepth.toStringAsFixed(1)} m' : ''}';
+        _hapticLevel = amplitude;
+      });
 
-    if (!_hapticOverride) {
-      HapticEngine.vibrate(
-        amplitude * _hapticK.clamp(0.0, 1.0),
-        const Duration(milliseconds: 200),
-      );
+      StatusAnnouncer.announce('${d.label} ahead');
+
+      if (!_hapticOverride) {
+        HapticEngine.vibrate(
+          amplitude * _hapticK.clamp(0.0, 1.0),
+          const Duration(milliseconds: 200),
+        );
+      }
+    } finally {
+      _applyBusy = false;
     }
   }
 

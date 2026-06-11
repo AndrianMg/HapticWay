@@ -35,12 +35,12 @@ class ArDepthChannel {
     return _frameStream!;
   }
 
-  /// Returns depth in metres at a normalised (0–1) image coordinate.
-  /// Returns -1.0 if depth is unavailable or confidence is too low.
-  Future<double> sampleDepth(double nx, double ny) async {
+  /// Scans the depth image over the bbox region and returns the minimum
+  /// valid depth in metres, or -1.0 if unavailable / low confidence.
+  Future<double> sampleDepth(double x1, double y1, double x2, double y2) async {
     final d = await _method.invokeMethod<double>(
       'sampleDepth',
-      {'nx': nx, 'ny': ny},
+      {'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2},
     );
     return d ?? -1.0;
   }
