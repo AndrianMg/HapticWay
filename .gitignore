@@ -49,3 +49,6 @@ android/build/
 *.pdf
 *.docx
 HAPTICWAY_CODING_TODO.md
+
+# Session data pulled from device (WoZ logs, benchmarks) — research artifacts
+/*.jsonl
