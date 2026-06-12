@@ -16,6 +16,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _hapticOverride = false;
   int? _selectedPreset;
 
+  // §7.3 benchmark condition grid: {bright,dim} × {empty,crowded}
+  String _benchLighting = 'bright';
+  String _benchScene = 'empty';
+
   static const List<_Preset> _presets = [
     _Preset(label: 'Subtle', k: 0.2),
     _Preset(label: 'Standard', k: 0.5),
@@ -112,6 +116,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _buildWoZButtons(),
               const SizedBox(height: 28),
               _sectionHeading('LATENCY BENCHMARK'),
+              const SizedBox(height: 12),
+              _buildConditionPickers(),
               const SizedBox(height: 12),
               _buildBenchmarkButton(),
               const SizedBox(height: 24),
@@ -370,11 +376,87 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // §7.3: condition selectors so each 20-frame run is tagged for the
+  // {bright,dim} × {empty,crowded} report grid.
+  Widget _buildConditionPickers() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _conditionRow(
+          title: 'Lighting',
+          options: const ['bright', 'dim'],
+          selected: _benchLighting,
+          onSelect: (v) => setState(() => _benchLighting = v),
+          focusOrder: 13,
+        ),
+        const SizedBox(height: 8),
+        _conditionRow(
+          title: 'Scene',
+          options: const ['empty', 'crowded'],
+          selected: _benchScene,
+          onSelect: (v) => setState(() => _benchScene = v),
+          focusOrder: 14,
+        ),
+      ],
+    );
+  }
+
+  Widget _conditionRow({
+    required String title,
+    required List<String> options,
+    required String selected,
+    required void Function(String) onSelect,
+    required int focusOrder,
+  }) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 80,
+          child: Text(
+            title,
+            style: const TextStyle(color: Color(0xFFE0E0E0), fontSize: 14),
+          ),
+        ),
+        ...options.asMap().entries.map((entry) {
+          final option = entry.value;
+          final isSelected = option == selected;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: FocusTraversalOrder(
+              order: NumericFocusOrder((focusOrder + entry.key * 0.1)),
+              child: Semantics(
+                label: '$title condition $option. '
+                    '${isSelected ? 'Selected.' : 'Not selected.'} Double tap to select.',
+                selected: isSelected,
+                button: true,
+                excludeSemantics: true,
+                child: ChoiceChip(
+                  label: Text(option),
+                  selected: isSelected,
+                  onSelected: (_) => onSelect(option),
+                  selectedColor: const Color(0xFF4CAF50),
+                  backgroundColor: const Color(0xFF0D1B2A),
+                  labelStyle: TextStyle(
+                    color: isSelected
+                        ? const Color(0xFF1A1A2E)
+                        : const Color(0xFFE0E0E0),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
   Widget _buildBenchmarkButton() {
     return FocusTraversalOrder(
-      order: const NumericFocusOrder(13),
+      order: const NumericFocusOrder(15),
       child: Semantics(
-        label: 'Start latency benchmark. Collects 20 frames then saves a CSV report.',
+        label: 'Start latency benchmark for $_benchLighting $_benchScene condition. '
+            'Collects 20 frames then saves a CSV report.',
         button: true,
         excludeSemantics: true,
         child: SizedBox(
@@ -390,9 +472,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
             ),
-            child: const Text(
-              'START BENCHMARK  (20 frames)',
-              style: TextStyle(fontWeight: FontWeight.bold),
+            child: Text(
+              'START BENCHMARK  ($_benchLighting / $_benchScene)',
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
           ),
         ),
@@ -401,7 +483,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _startBenchmark() {
-    if (mounted) Navigator.pop<bool>(context, true);
+    if (mounted) {
+      Navigator.pop<String>(context, '${_benchLighting}_$_benchScene');
+    }
   }
 }
 

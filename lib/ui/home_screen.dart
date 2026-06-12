@@ -237,13 +237,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _openSettings(BuildContext context) {
-    Navigator.push<bool>(
+    Navigator.push<String>(
       context,
-      MaterialPageRoute<bool>(builder: (_) => const SettingsScreen()),
-    ).then((benchmarkRequested) {
+      MaterialPageRoute<String>(builder: (_) => const SettingsScreen()),
+    ).then((benchmarkCondition) {
       _loadPrefs();
-      if (benchmarkRequested == true) {
-        _benchmark.start(onComplete: _onBenchmarkComplete);
+      if (benchmarkCondition != null) {
+        _benchmark.start(
+          condition: benchmarkCondition,
+          onComplete: _onBenchmarkComplete,
+        );
       }
     });
   }
@@ -251,8 +254,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onTiming(TimingData data) {
     _benchmark.addSample(data);
     if (_benchmark.isActive && mounted) {
-      setState(() =>
-          _statusText = 'Benchmarking… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
+      setState(() => _statusText =
+          'Benchmarking ${_benchmark.condition}… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
     }
   }
 
