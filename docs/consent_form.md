@@ -2,9 +2,9 @@
 
 **Study:** Evaluation of HapticWay — a smartphone navigation aid using
 vibration feedback, designed for blind and visually impaired users
-**Researcher:** Andrei Murug ([PLACEHOLDER — university email])
-**Supervisor:** [PLACEHOLDER — name and email]
-**Ethics approval reference:** [PLACEHOLDER — from docs/ethics_approval.md]
+**Researcher:** Andrei Murug (<Andrei.HE22486@student.rcl.ac.uk>)
+**Supervisor:** Faisal Maramazi (<Faisal.Maramazi@rcl.ac.uk>)
+**Ethics record:** Form RE1, Regent College London (signed 08/06/2026; REO copy retained — see docs/ethics_approval.md)
 
 *This form is available in large print, electronic screen-reader-friendly
 format, and can be read aloud. Verbal explanation is always provided; a
@@ -51,7 +51,7 @@ navigation task. The route is indoors and checked in advance.
 ## Consent (please initial each statement)
 
 | | Initials |
-|---|---|
+| --- | --- |
 | I have read this form, or had it read to me, and had the chance to ask questions | ______ |
 | I understand participation is voluntary and I can stop or withdraw at any time without reason | ______ |
 | I agree to the interview being audio-recorded and transcribed anonymously | ______ |

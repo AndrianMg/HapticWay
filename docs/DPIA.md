@@ -1,9 +1,9 @@
 # Data Protection Impact Assessment (DPIA)
 
 **Project:** HapticWay — offline haptic navigation aid for blind and visually impaired users
-**Controller:** [PLACEHOLDER — university / principal investigator]
-**Date:** [PLACEHOLDER — date of sign-off]
-**Reviewed by:** [PLACEHOLDER — supervisor / DPO]
+**Controller:** Andrei Murug (student researcher), Regent College London
+**Date:** [PENDING — date of supervisor sign-off]
+**Reviewed by:** Faisal Maramazi (supervisor)
 
 ---
 
@@ -12,7 +12,7 @@
 ### 1.1 In the app (on-device, during any use)
 
 | Data | Processing | Persistence |
-|---|---|---|
+| --- | --- | --- |
 | Camera frames | Real-time object detection (TFLite, on-device) | **Never stored** — frames exist only in memory for the duration of one inference pass (constraint C5) |
 | Depth images (ARCore) | Real-time distance estimation | Never stored — cached in memory per frame only |
 | Haptic sensitivity setting (k) | Stored to personalise vibration strength | `shared_preferences`, opaque numeric value, no PII |
@@ -23,7 +23,7 @@ The app makes **no network calls in the navigation loop** (constraint C4) and ha
 ### 1.2 In the research study (§7.2 user testing)
 
 | Data | Category | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | Visual-impairment status / sight-loss severity | **Special category (Art. 9)** | Recruitment mix + interpreting results; recorded as an anonymous demographic variable |
 | Age band, tech experience, cultural background | Personal data | Anonymous demographic variables |
 | Interview recordings / transcripts | Personal data | Thematic analysis; anonymised at transcription |
@@ -62,7 +62,7 @@ processors, no international transfers.
 ## 5. Risks and mitigations
 
 | # | Risk | Likelihood | Severity | Mitigation |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | 1 | Physical injury during blindfold navigation | Medium | High | Scripted pre-walked route; researcher within arm's reach; immediate-stop rule; near-miss logging (§6.4 harness) |
 | 2 | Re-identification from small sample (n≥5) | Medium | Medium | Anonymous IDs; demographic variables reported only in aggregate; no direct quotes attributed to identifiable combinations of demographics |
 | 3 | Camera captures bystanders during sessions | Medium | Low | Frames never persisted (C5); sessions in controlled spaces; signage informing bystanders |

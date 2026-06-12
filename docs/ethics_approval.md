@@ -3,15 +3,22 @@
 ## Approval reference
 
 | Field | Value |
-|---|---|
-| Ethics committee | [PLACEHOLDER — university research ethics committee name] |
-| Approval reference | [PLACEHOLDER — e.g. REC-2026-XXXX] |
-| Date of approval | [PLACEHOLDER] |
-| Approved by | [PLACEHOLDER — committee chair / reviewer] |
-| Principal investigator | Andrei Murug |
-| Supervisor | [PLACEHOLDER] |
+| --- | --- |
+| Route | Form RE1 — Research Ethics Checklist (exempt from full review: all Section 2 items answered NO, all declarations checked) |
+| Institution | School of Engineering and Computing (SoEC), Regent College London |
+| Reviewing officer | School/Centre Research Ethics Officer (REO) |
+| Project title (as registered) | "HapticWay: An Offline-First, Edge AI Mobile Navigation Assistant for Visually Impaired Students" |
+| Module | COM6301 — Undergraduate Project, BEng Software Engineering |
+| Principal investigator | Andrei Murug (<Andrei.HE22486@student.rcl.ac.uk>) |
+| Supervisor | Faisal Maramazi (<Faisal.Maramazi@rcl.ac.uk>) |
+| Signed by researcher | 08/06/2026 |
+| Supervisor approval | [PENDING — sent for signature] |
+| REO countersignature | [PENDING — REO returns signed copy] |
 
-Approval **must be on file before any participant recruitment begins** (report requirement A3). User testing sessions (§7.2) may not be scheduled until the reference above is completed.
+Per Form RE1: the checklist **must be completed before potential participants
+are approached** (report requirement A3). The REO-signed copy is retained and
+submitted with the final report. User testing sessions (§7.2) may not be
+scheduled until the supervisor and REO signatures above are in place.
 
 ## Scope of approved study
 
