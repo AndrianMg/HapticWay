@@ -18,6 +18,7 @@ import android.view.Surface
 import android.view.WindowManager
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
+import com.google.ar.core.Coordinates2d
 import com.google.ar.core.Session
 import com.google.ar.core.TrackingState
 import com.google.ar.core.exceptions.NotYetAvailableException
@@ -31,6 +32,10 @@ import io.flutter.view.TextureRegistry
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlin.math.max
+import kotlin.math.min
 
 /**
  * §6.1 — ARCore depth integration.
@@ -117,10 +122,26 @@ class ArDepthChannel(
     private var loopHandler: Handler? = null
     @Volatile private var running = false
 
-    // Latest cached depth image data
-    @Volatile private var depthData: ShortArray? = null
+    // Latest cached depth image data. Raw plane bytes are kept (not a ShortArray)
+    // so sampleDepth can honour rowStride/pixelStride — the plane may have row
+    // padding, so width*2 bytes-per-row cannot be assumed.
+    @Volatile private var depthBytes: ByteArray? = null
+    @Volatile private var depthRowStride = 0
+    @Volatile private var depthPixelStride = 0
     @Volatile private var depthW = 0
     @Volatile private var depthH = 0
+
+    // Cached IMAGE_NORMALIZED → TEXTURE_NORMALIZED affine (the space the depth
+    // image is indexed in). Computed per frame from the live Frame; applied in
+    // sampleDepth, which runs off-frame (async method channel) with no Frame.
+    // tex_x = tA*nx + tC*ny + tTx ;  tex_y = tB*nx + tD*ny + tTy
+    @Volatile private var depthMapValid = false
+    @Volatile private var tA = 0f
+    @Volatile private var tB = 0f
+    @Volatile private var tC = 0f
+    @Volatile private var tD = 0f
+    @Volatile private var tTx = 0f
+    @Volatile private var tTy = 0f
 
     init {
         methodCh.setMethodCallHandler(::handleMethod)
@@ -232,12 +253,33 @@ class ArDepthChannel(
             if (frame.camera.trackingState == TrackingState.TRACKING) {
                 try {
                     frame.acquireDepthImage16Bits().use { di ->
-                        val buf = di.planes[0].buffer.asShortBuffer()
-                        val arr = ShortArray(buf.remaining()).also { buf.get(it) }
-                        depthData = arr
+                        val plane = di.planes[0]
+                        val src = plane.buffer
+                        val bytes = ByteArray(src.remaining())
+                        src.get(bytes)
+                        depthBytes = bytes
+                        depthRowStride = plane.rowStride
+                        depthPixelStride = plane.pixelStride
                         depthW = di.width
                         depthH = di.height
                     }
+
+                    // Cache the IMAGE_NORMALIZED → TEXTURE_NORMALIZED affine so
+                    // sampleDepth can map detection-frame coords into depth-image
+                    // pixels. The depth image is indexed in TEXTURE_NORMALIZED;
+                    // the detection (CPU) image is a different aspect (4:3 vs 16:9)
+                    // and orientation, so ARCore's transform — not a uniform
+                    // scale — is required. Transform 3 basis points → affine.
+                    val inPts = floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f)
+                    val outPts = FloatArray(6)
+                    frame.transformCoordinates2d(
+                        Coordinates2d.IMAGE_NORMALIZED, inPts,
+                        Coordinates2d.TEXTURE_NORMALIZED, outPts,
+                    )
+                    tTx = outPts[0]; tTy = outPts[1]
+                    tA = outPts[2] - tTx; tB = outPts[3] - tTy
+                    tC = outPts[4] - tTx; tD = outPts[5] - tTy
+                    depthMapValid = true
                 } catch (_: NotYetAvailableException) {}
             }
 
@@ -315,32 +357,72 @@ class ArDepthChannel(
     // ── Depth sampling ────────────────────────────────────────────────────────
 
     /**
-     * Scan the depth image over the bbox region (normalised coords 0–1) and
-     * return the MINIMUM valid depth in metres, or -1.0 if unavailable.
+     * Scan the depth image over the bbox region and return a robust "nearest
+     * surface" depth in metres, or -1.0 if unavailable / outside depth coverage.
      *
-     * Using min rather than the bbox centre avoids reading background when the
-     * detection bbox includes far-away context (e.g. a person's torso behind
-     * an outstretched hand).  The closest valid pixel is the obstacle distance.
+     * The bbox is in detection-frame normalised coords (IMAGE_NORMALIZED, the
+     * 4:3 CPU image). The depth image is indexed in TEXTURE_NORMALIZED (a
+     * different aspect, 16:9, and orientation), so the corners are mapped via
+     * the cached ARCore affine — NOT a uniform scale (the "confidently wrong
+     * 10 m" defect). Mapping verified on-device; do not change it.
      *
-     * acquireDepthImage16Bits() format: plain 16-bit unsigned mm, 0 = no data.
-     * (acquireRawDepthImage16Bits() packs confidence in bits 13-15 — different API.)
+     * Pixel decode (DEPTH16): each 16-bit sample is little-endian; depth is the
+     * low 13 bits (`raw and 0x1FFF`, mm) and the top 3 bits are confidence
+     * (`raw shr 13`). Reading the full word as mm gave 0xFF05 = 65285 mm (the
+     * "confidently-wrong far value" defect); masking yields ~7941 mm. The plane
+     * is read with rowStride/pixelStride (row padding is real on this device).
+     *
+     * Confidence convention note: Android's DEPTH16 spec says conf 0 = 100%, but
+     * ARCore's depth pipeline (and this device's data — the 257 mm noise floor
+     * carries conf 0 while a real ~8 m wall carries conf 7) treats conf 0 as
+     * invalid/no-estimate. We follow the device evidence: exclude conf == 0.
+     *
+     * Statistic: 20th percentile of the cleaned valid set (unchanged).
      */
     fun sampleDepth(nx1: Float, ny1: Float, nx2: Float, ny2: Float): Double {
-        val data = depthData ?: return -1.0
-        val px1 = (nx1 * depthW).toInt().coerceIn(0, depthW - 1)
-        val py1 = (ny1 * depthH).toInt().coerceIn(0, depthH - 1)
-        val px2 = (nx2 * depthW).toInt().coerceIn(0, depthW - 1)
-        val py2 = (ny2 * depthH).toInt().coerceIn(0, depthH - 1)
-        // acquireDepthImage16Bits() uses plain 16-bit mm — no confidence packing.
-        // 0 = no depth estimate available; nonzero = depth in millimetres.
-        var minMm = Int.MAX_VALUE
-        for (row in py1..py2) {
-            for (col in px1..px2) {
-                val mm = data[row * depthW + col].toInt() and 0xFFFF
-                if (mm >= 200 && mm < minMm) minMm = mm
+        val data = depthBytes ?: return -1.0
+        if (!depthMapValid) return -1.0
+
+        // Map the two opposite bbox corners IMAGE_NORMALIZED → TEXTURE_NORMALIZED
+        // → depth pixels. A ≤90° display rotation keeps the region axis-aligned,
+        // so min/max of the mapped corners gives the depth-pixel scan rectangle.
+        val ax = (tA * nx1 + tC * ny1 + tTx) * depthW
+        val ay = (tB * nx1 + tD * ny1 + tTy) * depthH
+        val bx = (tA * nx2 + tC * ny2 + tTx) * depthW
+        val by = (tB * nx2 + tD * ny2 + tTy) * depthH
+
+        var pxLo = floor(min(ax, bx)).toInt()
+        var pxHi = ceil(max(ax, bx)).toInt()
+        var pyLo = floor(min(ay, by)).toInt()
+        var pyHi = ceil(max(ay, by)).toInt()
+
+        // No-coverage: region entirely outside the depth image → unknown (-1.0),
+        // never a clipped far value. Otherwise clamp to the valid in-bounds part.
+        if (pxHi < 0 || pyHi < 0 || pxLo > depthW - 1 || pyLo > depthH - 1) {
+            return -1.0
+        }
+        pxLo = pxLo.coerceIn(0, depthW - 1); pxHi = pxHi.coerceIn(0, depthW - 1)
+        pyLo = pyLo.coerceIn(0, depthH - 1); pyHi = pyHi.coerceIn(0, depthH - 1)
+
+        // Collect valid depths (mm), decoding DEPTH16 per pixel. Exclude conf==0
+        // (invalid) and depthMm==0. Flat IntArray (no boxing).
+        val region = (pyHi - pyLo + 1) * (pxHi - pxLo + 1)
+        val buf = IntArray(region)
+        var n = 0
+        for (row in pyLo..pyHi) {
+            val rowBase = row * depthRowStride
+            for (col in pxLo..pxHi) {
+                val off = rowBase + col * depthPixelStride
+                val raw = (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
+                val depthMm = raw and 0x1FFF
+                val conf = (raw shr 13) and 0x7
+                if (conf != 0 && depthMm != 0) buf[n++] = depthMm
             }
         }
-        return if (minMm == Int.MAX_VALUE) -1.0 else minMm / 1000.0
+        if (n == 0) return -1.0
+
+        java.util.Arrays.sort(buf, 0, n)
+        return buf[(n * 20 / 100).coerceIn(0, n - 1)] / 1000.0
     }
 
     // ── Stop ──────────────────────────────────────────────────────────────────
@@ -356,7 +438,8 @@ class ArDepthChannel(
         loopThread = null; loopHandler = null
         session?.pause(); session?.close(); session = null
         previewEntry?.release(); previewEntry = null
-        depthData = null
+        depthBytes = null
+        depthMapValid = false
     }
 
     // ── EGL / GL setup ────────────────────────────────────────────────────────
