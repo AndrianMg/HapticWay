@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -36,6 +37,9 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── UI state ───────────────────────────────────────────────────────────────
   String _statusText = 'Initialising…';
   double _hapticLevel = 0.0;
+
+  // Debug-only detection overlay (box-alignment check for the letterbox fix).
+  List<Detection> _overlayDets = const [];
 
   // ── Stability filter ───────────────────────────────────────────────────────
   String? _stableLabel;
@@ -131,6 +135,9 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Detection handler ─────────────────────────────────────────────────────
   void _onDetections(List<Detection> detections) {
     if (!mounted) return;
+
+    // Debug overlay: show every frame's raw boxes so box alignment is visible.
+    if (kDebugMode) setState(() => _overlayDets = detections);
 
     if (detections.isEmpty) {
       _stableLabel = null;
@@ -357,7 +364,15 @@ class _HomeScreenState extends State<HomeScreen> {
       // §6.1: Texture widget backed by ARCore's ImageConsumer.
       // Falls back to a loading spinner until the ARCore session is ready.
       child: texId != null
-          ? Texture(textureId: texId)
+          ? Stack(
+              fit: StackFit.expand,
+              children: [
+                Texture(textureId: texId),
+                // Debug-only box overlay for the letterbox-fix alignment check.
+                if (kDebugMode)
+                  CustomPaint(painter: _DetectionOverlayPainter(_overlayDets)),
+              ],
+            )
           : Container(
               color: const Color(0xFF0A0A1A),
               child: Center(
@@ -511,4 +526,46 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+/// Debug-only painter: draws detection boxes (normalised frame coords) over the
+/// camera preview so the letterbox-inverse box alignment can be verified by eye.
+class _DetectionOverlayPainter extends CustomPainter {
+  final List<Detection> dets;
+  const _DetectionOverlayPainter(this.dets);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stroke = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..color = const Color(0xFFFF6B35);
+
+    for (final d in dets) {
+      final rect = Rect.fromLTRB(
+        d.bbox.left * size.width,
+        d.bbox.top * size.height,
+        d.bbox.right * size.width,
+        d.bbox.bottom * size.height,
+      );
+      canvas.drawRect(rect, stroke);
+
+      final tp = TextPainter(
+        text: TextSpan(
+          text: ' ${d.label} ${(d.confidence * 100).round()}% ',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            backgroundColor: Color(0xFFFF6B35),
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(rect.left, (rect.top - 14).clamp(0.0, size.height)));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DetectionOverlayPainter old) =>
+      !identical(old.dets, dets);
 }

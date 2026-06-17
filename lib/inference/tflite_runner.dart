@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
 import 'detection.dart';
+import 'frame_preprocessor.dart';
 import 'postprocess.dart';
 
 class TfliteRunner {
@@ -49,8 +50,10 @@ class TfliteRunner {
     }
   }
 
-  List<Detection> run(Uint8List rgbInput) {
+  List<Detection> run(LetterboxResult input) {
     if (!_ready || _interpreter == null) return [];
+
+    final rgbInput = input.tensor;
 
     final outShape = _interpreter!.getOutputTensor(0).shape;
     final dim1 = outShape[1];
@@ -117,7 +120,16 @@ class TfliteRunner {
       );
     }
 
-    return Postprocess.parseYolo(raw: raw2d, labels: _labels);
+    return Postprocess.parseYolo(
+      raw: raw2d,
+      labels: _labels,
+      scale: input.scale,
+      padX: input.padX,
+      padY: input.padY,
+      frameW: input.frameW,
+      frameH: input.frameH,
+      modelSize: FramePreprocessor.modelSize,
+    );
   }
 
   void close() {

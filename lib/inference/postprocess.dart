@@ -8,15 +8,25 @@ import 'detection.dart';
 class Postprocess {
   static const _targetClasses = {
     'person', 'bicycle', 'bench', 'chair',
-    'door', 'staircase', 'pole', 'wet_floor_sign',
+    'door', 'staircase', 'pole',
   };
 
   // Parses YOLOv8n output tensor: raw[4+numClasses][numAnchors].
   // Layout per anchor i: [cx, cy, w, h, score_class0, score_class1, ...]
-  // All coordinates are normalised [0, 1].
+  // Box coords are normalised [0, 1] in the **letterboxed model space**.
+  //
+  // [scale], [padX], [padY], [frameW], [frameH] are the exact letterbox params
+  // from FramePreprocessor; output boxes are inverted back to normalised [0, 1]
+  // in the **original camera frame** space (the contract Detection.bbox expects).
   static List<Detection> parseYolo({
     required List<List<double>> raw,  // [4+numClasses][numAnchors]
     required List<String> labels,
+    required double scale,
+    required int padX,
+    required int padY,
+    required int frameW,
+    required int frameH,
+    int modelSize = 320,
   }) {
     final numAnchors = raw[0].length;
     final numClasses = raw.length - 4;
@@ -64,11 +74,22 @@ class Postprocess {
       }
     }
 
+    // Letterbox inverse: model-space normalised [0,1] → frame-space normalised
+    // [0,1]. xModelPx = xNorm * S; xFramePx = (xModelPx - pad) / scale;
+    // xFrameNorm = xFramePx / frameDim. Uses the exact scale/pad from Task 1.
+    final S = modelSize.toDouble();
+    double toFrameX(double xNorm) =>
+        (((xNorm * S - padX) / scale) / frameW).clamp(0.0, 1.0);
+    double toFrameY(double yNorm) =>
+        (((yNorm * S - padY) / scale) / frameH).clamp(0.0, 1.0);
+
     final now = DateTime.now();
     final result = kept.map((d) => Detection(
       label: d.label,
       confidence: d.score,
-      bbox: Rect.fromLTRB(d.x1, d.y1, d.x2, d.y2),
+      bbox: Rect.fromLTRB(
+        toFrameX(d.x1), toFrameY(d.y1), toFrameX(d.x2), toFrameY(d.y2),
+      ),
       timestamp: now,
     )).toList();
 

@@ -142,7 +142,7 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
       }
 
       final prepSw = Stopwatch()..start();
-      final rgb = FramePreprocessor.process(
+      final letterboxed = FramePreprocessor.process(
         yPlane:       msg.y,
         uPlane:       msg.u,
         vPlane:       msg.v,
@@ -155,7 +155,7 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
       final prepMs = (prepSw..stop()).elapsedMilliseconds;
 
       final inferSw = Stopwatch()..start();
-      final detections = runner.run(rgb);
+      final detections = runner.run(letterboxed);
       final inferMs = (inferSw..stop()).elapsedMilliseconds;
 
       args.sendPort.send({
