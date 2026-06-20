@@ -4,4 +4,3 @@ bench
 chair
 door
 staircase
-pole

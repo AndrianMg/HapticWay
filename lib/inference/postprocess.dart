@@ -8,7 +8,7 @@ import 'detection.dart';
 class Postprocess {
   static const _targetClasses = {
     'person', 'bicycle', 'bench', 'chair',
-    'door', 'staircase', 'pole',
+    'door', 'staircase',
   };
 
   // Parses YOLOv8n output tensor: raw[4+numClasses][numAnchors].
