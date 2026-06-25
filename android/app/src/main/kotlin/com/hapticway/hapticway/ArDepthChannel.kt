@@ -372,10 +372,11 @@ class ArDepthChannel(
      * "confidently-wrong far value" defect); masking yields ~7941 mm. The plane
      * is read with rowStride/pixelStride (row padding is real on this device).
      *
-     * Confidence convention note: Android's DEPTH16 spec says conf 0 = 100%, but
-     * ARCore's depth pipeline (and this device's data — the 257 mm noise floor
-     * carries conf 0 while a real ~8 m wall carries conf 7) treats conf 0 as
-     * invalid/no-estimate. We follow the device evidence: exclude conf == 0.
+     * Confidence: on-device per-pixel logging proved acquireDepthImage16Bits()
+     * reports confidence 0 for ALL valid pixels here (Android DEPTH16 spec:
+     * 0 = 100% confident). An earlier `conf != 0` filter therefore discarded the
+     * entire depth map (the "flat HAPTIC bar / depthM always -1" defect). We do
+     * NOT filter on the confidence bits — only depthMm and a 200 mm noise floor.
      *
      * Statistic: 20th percentile of the cleaned valid set (unchanged).
      */
@@ -404,8 +405,7 @@ class ArDepthChannel(
         pxLo = pxLo.coerceIn(0, depthW - 1); pxHi = pxHi.coerceIn(0, depthW - 1)
         pyLo = pyLo.coerceIn(0, depthH - 1); pyHi = pyHi.coerceIn(0, depthH - 1)
 
-        // Collect valid depths (mm), decoding DEPTH16 per pixel. Exclude conf==0
-        // (invalid) and depthMm==0. Flat IntArray (no boxing).
+        // Collect valid depths (mm), decoding DEPTH16 per pixel. Flat IntArray.
         val region = (pyHi - pyLo + 1) * (pxHi - pxLo + 1)
         val buf = IntArray(region)
         var n = 0
@@ -414,9 +414,12 @@ class ArDepthChannel(
             for (col in pxLo..pxHi) {
                 val off = rowBase + col * depthPixelStride
                 val raw = (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
+                // Depth = low 13 bits (mm). On this device the confidence bits
+                // (raw shr 13) are 0 for every valid pixel (Android DEPTH16:
+                // 0 = 100% confident), so we do NOT filter on them — doing so
+                // discarded the whole map. Floor at 200 mm drops ToF near-zero noise.
                 val depthMm = raw and 0x1FFF
-                val conf = (raw shr 13) and 0x7
-                if (conf != 0 && depthMm != 0) buf[n++] = depthMm
+                if (depthMm >= 200) buf[n++] = depthMm
             }
         }
         if (n == 0) return -1.0
