@@ -1,5 +1,5 @@
 const int kInferenceLatencyBudgetMs = 50;
-const double kMinConfidence = 0.20;
+const double kMinConfidence = 0.45;
 const double kHapticConstantK = 0.5;
 const double kMinDistanceMeters = 0.3;
 const double kMaxDistanceMeters = 4.0;
@@ -10,4 +10,4 @@ const String kPrefKeyOnboardingComplete = 'onboarding_complete';
 
 const Duration kAnnouncementThrottle = Duration(milliseconds: 1500);
 const int kMaxConsecutiveFailedFrames = 3;
-const int kDetectionStabilityFrames = 3;
+const int kDetectionStabilityFrames = 4;
