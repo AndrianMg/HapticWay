@@ -56,8 +56,6 @@ flutter:
   uses-material-design: true
 
   assets:
-    - assets/models/ssd_mobilenet_v2_int8.tflite
-    - assets/labels/coco_labels_filtered.txt
     - assets/labels/hapticway_labels.txt
     - assets/models/hapticway_custom.tflite
 

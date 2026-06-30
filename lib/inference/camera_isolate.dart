@@ -113,11 +113,15 @@ class _IsolateArgs {
 class _FrameMsg {
   final Uint8List y, u, v;
   final int width, height, yRowStride, uvRowStride, uvPixelStride;
+  // S20 Ultra sensor orientation is 90° CW; portrait deployment always needs
+  // the frame rotated 90° CW to upright before inference.
+  final int rotationDegrees;
   const _FrameMsg({
     required this.y, required this.u, required this.v,
     required this.width, required this.height,
     required this.yRowStride, required this.uvRowStride,
     required this.uvPixelStride,
+    this.rotationDegrees = 90,
   });
 }
 
@@ -143,14 +147,15 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
 
       final prepSw = Stopwatch()..start();
       final letterboxed = FramePreprocessor.process(
-        yPlane:       msg.y,
-        uPlane:       msg.u,
-        vPlane:       msg.v,
-        width:        msg.width,
-        height:       msg.height,
-        yRowStride:   msg.yRowStride,
-        uvRowStride:  msg.uvRowStride,
-        uvPixelStride: msg.uvPixelStride,
+        yPlane:          msg.y,
+        uPlane:          msg.u,
+        vPlane:          msg.v,
+        width:           msg.width,
+        height:          msg.height,
+        yRowStride:      msg.yRowStride,
+        uvRowStride:     msg.uvRowStride,
+        uvPixelStride:   msg.uvPixelStride,
+        rotationDegrees: msg.rotationDegrees,
       );
       final prepMs = (prepSw..stop()).elapsedMilliseconds;
 
