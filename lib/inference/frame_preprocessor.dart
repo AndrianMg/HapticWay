@@ -72,10 +72,14 @@ class FramePreprocessor {
         final uVal = uPlane[uvIdx];
         final vVal = vPlane[uvIdx];
 
-        // ITU-R BT.601 coefficients (full-swing)
-        int r = (yVal + 1.402 * (vVal - 128)).round();
-        int g = (yVal - 0.344 * (uVal - 128) - 0.714 * (vVal - 128)).round();
-        int b = (yVal + 1.772 * (uVal - 128)).round();
+        // ITU-R BT.601 full-swing — fixed-point ×256 (coefficients pre-scaled,
+        // bit-shifted instead of float multiply; eliminates .round() on doubles).
+        // 1.402→359  0.344→88  0.714→183  1.772→454  (max rounding error <1/255)
+        final int u128 = uVal - 128;
+        final int v128 = vVal - 128;
+        final int r = (yVal + ((359 * v128) >> 8)).clamp(0, 255);
+        final int g = (yVal - ((88  * u128) >> 8) - ((183 * v128) >> 8)).clamp(0, 255);
+        final int b = (yVal + ((454 * u128) >> 8)).clamp(0, 255);
 
         final int dstIdx = rotate90
             ? (col * frameW + (height - 1 - row)) * 3
