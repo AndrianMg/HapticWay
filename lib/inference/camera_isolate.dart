@@ -9,13 +9,22 @@ import 'detection.dart';
 import 'frame_preprocessor.dart';
 import 'tflite_runner.dart';
 
+/// Detection/timing stream contract implemented by [CameraIsolate]. Lets
+/// tests inject a fake in place of a real background isolate.
+abstract class DetectionSource {
+  Stream<List<Detection>> get detections;
+  Stream<TimingData> get timing;
+  Future<void> start();
+  Future<void> stop();
+}
+
 /// Manages a long-running background isolate that runs TFLite inference.
 ///
 /// §6.1 change: camera frames now come from [ArDepthChannel.frameStream]
 /// (ARCore EventChannel) instead of the Flutter camera plugin image stream.
 /// The isolate boundary contract is unchanged — only preprocessed pixel data
 /// crosses; the YUV bytes are copied once into [_FrameMsg] before sending.
-class CameraIsolate {
+class CameraIsolate implements DetectionSource {
   Isolate? _isolate;
   SendPort? _toIsolate;
   bool _busy = false;
@@ -24,9 +33,12 @@ class CameraIsolate {
   final _detectionController = StreamController<List<Detection>>.broadcast();
   final _timingController    = StreamController<TimingData>.broadcast();
 
+  @override
   Stream<List<Detection>> get detections => _detectionController.stream;
+  @override
   Stream<TimingData>      get timing     => _timingController.stream;
 
+  @override
   Future<void> start() async {
     // Load model assets on the main isolate — rootBundle is unavailable
     // in background isolates (constraint established in §5.2).
@@ -88,6 +100,7 @@ class CameraIsolate {
     ));
   }
 
+  @override
   Future<void> stop() async {
     await _frameSub?.cancel();
     _frameSub = null;

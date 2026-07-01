@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
+import '../inference/camera_isolate.dart';
 import 'home_screen.dart';
 
 class OnboardingScreen extends StatefulWidget {
-  const OnboardingScreen({super.key});
+  const OnboardingScreen({super.key, this.homeDetectionSource});
+
+  // Test-only seam, threaded through to the HomeScreen this navigates to on
+  // grant — defaults to null (a real CameraIsolate) in production.
+  final DetectionSource? homeDetectionSource;
 
   @override
   State<OnboardingScreen> createState() => _OnboardingScreenState();
@@ -35,7 +40,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute<void>(builder: (_) => const HomeScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => HomeScreen(detectionSource: widget.homeDetectionSource),
+      ),
     );
   }
 

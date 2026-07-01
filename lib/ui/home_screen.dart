@@ -17,7 +17,10 @@ import 'settings_screen.dart';
 import 'widgets/status_announcer.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  const HomeScreen({super.key, this.detectionSource});
+
+  // Injectable seam for tests — defaults to a real [CameraIsolate] when null.
+  final DetectionSource? detectionSource;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -31,7 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── §6.1 ARCore ────────────────────────────────────────────────────────────
   // textureId returned by ArDepthChannel.start(); drives the Texture widget.
   int? _textureId;
-  CameraIsolate? _isolate;
+  DetectionSource? _isolate;
   StreamSubscription<List<Detection>>? _detSub;
 
   // ── UI state ───────────────────────────────────────────────────────────────
@@ -91,7 +94,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       setState(() => _textureId = texId);
 
-      _isolate = CameraIsolate();
+      _isolate = widget.detectionSource ?? CameraIsolate();
       await _isolate!.start();
 
       _detSub   = _isolate!.detections.listen(_onDetections);
