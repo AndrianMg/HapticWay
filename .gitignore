@@ -52,3 +52,20 @@ HAPTICWAY_CODING_TODO.md
 
 # Session data pulled from device (WoZ logs, benchmarks) — research artifacts
 /*.jsonl
+
+# AI coding assistant local state — not part of the submission
+.claude/
+.agents/
+skills-lock.json
+
+# Secrets — never commit (upload_to_drive.py OAuth artifacts)
+credentials.json
+token.json
+*.env
+.env.*
+.venv/
+venv/
+
+# ML training artifacts (the shipped model lives in assets/models/, which stays tracked)
+ml/*.tflite
+ml/*.zip

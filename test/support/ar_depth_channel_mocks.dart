@@ -33,9 +33,16 @@ class ArDepthChannelMock {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockStreamHandler(
       _framesChannel,
+      // Block bodies, not arrows: an arrow's expression value would flow
+      // through as the mock method reply, and the codec can't encode a
+      // MockStreamHandlerEventSink.
       MockStreamHandler.inline(
-        onListen: (args, events) => _frameSink = events,
-        onCancel: (args) => _frameSink = null,
+        onListen: (args, events) {
+          _frameSink = events;
+        },
+        onCancel: (args) {
+          _frameSink = null;
+        },
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../benchmark/timing_data.dart';
@@ -30,6 +31,13 @@ class CameraIsolate implements DetectionSource {
   bool _busy = false;
   StreamSubscription<Map<String, dynamic>>? _frameSub;
 
+  ReceivePort? _fromIsolate;
+  StreamSubscription<dynamic>? _fromIsolateSub;
+  ReceivePort? _exitPort;
+  ReceivePort? _errorPort;
+  Completer<void>? _exitCompleter;
+  bool _stopping = false;
+
   final _detectionController = StreamController<List<Detection>>.broadcast();
   final _timingController    = StreamController<TimingData>.broadcast();
 
@@ -51,19 +59,40 @@ class CameraIsolate implements DetectionSource {
         .where((l) => l.isNotEmpty)
         .toList();
 
-    final fromIsolate = ReceivePort();
+    _fromIsolate = ReceivePort();
+    _exitPort    = ReceivePort();
+    _errorPort   = ReceivePort();
+    _exitCompleter = Completer<void>();
     final token = RootIsolateToken.instance!;
-
-    _isolate = await Isolate.spawn(
-      _isolateEntry,
-      _IsolateArgs(token, fromIsolate.sendPort, modelBytes, labels),
-    );
 
     final completer = Completer<void>();
 
-    fromIsolate.listen((msg) {
+    // Errors arrive as [errorString, stackTraceString]. If the isolate dies
+    // before signalling ready, fail start(); afterwards surface the error on
+    // the detections stream so HomeScreen can show it instead of going silent.
+    _errorPort!.listen((msg) {
+      _busy = false;
+      final description = (msg is List && msg.isNotEmpty) ? '${msg.first}' : '$msg';
+      final error = StateError('inference isolate error: $description');
+      if (!completer.isCompleted) {
+        completer.completeError(error);
+      } else if (!_detectionController.isClosed) {
+        _detectionController.addError(error);
+      }
+    });
+
+    _exitPort!.listen((_) {
+      _busy = false;
+      if (!(_exitCompleter?.isCompleted ?? true)) _exitCompleter!.complete();
+      if (!_stopping && !_detectionController.isClosed) {
+        _detectionController.addError(
+            StateError('inference isolate exited unexpectedly'));
+      }
+    });
+
+    _fromIsolateSub = _fromIsolate!.listen((msg) {
       if (msg == _IsolateCmd.ready) {
-        completer.complete();
+        if (!completer.isCompleted) completer.complete();
       } else if (msg is SendPort) {
         _toIsolate = msg;
       } else if (msg is Map) {
@@ -79,32 +108,85 @@ class CameraIsolate implements DetectionSource {
       }
     });
 
-    await completer.future;
+    _isolate = await Isolate.spawn(
+      _isolateEntry,
+      _IsolateArgs(token, _fromIsolate!.sendPort, modelBytes, labels),
+      onExit:  _exitPort!.sendPort,
+      onError: _errorPort!.sendPort,
+    );
+
+    try {
+      await completer.future.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      _isolate?.kill(priority: Isolate.immediate);
+      _isolate = null;
+      _closePorts();
+      rethrow;
+    }
 
     // Subscribe to ARCore frame stream — replaces CameraController.startImageStream.
-    _frameSub = ArDepthChannel.instance.frameStream.listen(_onArFrame);
+    _frameSub = ArDepthChannel.instance.frameStream.listen(
+      _onArFrame,
+      onError: (Object e) =>
+          debugPrint('CameraIsolate: frameStream error: $e'),
+    );
   }
 
   void _onArFrame(Map<String, dynamic> frame) {
     if (_toIsolate == null || _busy) return;
+    final _FrameMsg msg;
+    try {
+      msg = _FrameMsg(
+        y:             frame['y']             as Uint8List,
+        u:             frame['u']             as Uint8List,
+        v:             frame['v']             as Uint8List,
+        width:         frame['width']         as int,
+        height:        frame['height']        as int,
+        yRowStride:    frame['yRowStride']    as int,
+        uvRowStride:   frame['uvRowStride']   as int,
+        uvPixelStride: frame['uvPixelStride'] as int,
+      );
+    } catch (e) {
+      debugPrint('CameraIsolate: malformed frame dropped: $e');
+      return;
+    }
     _busy = true;
-    _toIsolate!.send(_FrameMsg(
-      y:             frame['y']             as Uint8List,
-      u:             frame['u']             as Uint8List,
-      v:             frame['v']             as Uint8List,
-      width:         frame['width']         as int,
-      height:        frame['height']        as int,
-      yRowStride:    frame['yRowStride']    as int,
-      uvRowStride:   frame['uvRowStride']   as int,
-      uvPixelStride: frame['uvPixelStride'] as int,
-    ));
+    _toIsolate!.send(msg);
+  }
+
+  void _closePorts() {
+    _fromIsolateSub?.cancel();
+    _fromIsolateSub = null;
+    _fromIsolate?.close();
+    _fromIsolate = null;
+    _exitPort?.close();
+    _exitPort = null;
+    _errorPort?.close();
+    _errorPort = null;
   }
 
   @override
   Future<void> stop() async {
+    _stopping = true;
     await _frameSub?.cancel();
     _frameSub = null;
-    _isolate?.kill(priority: Isolate.immediate);
+    if (_isolate != null) {
+      // Ask the isolate to shut down cleanly so the TFLite interpreter's
+      // native memory is released; kill is only the unresponsive-isolate
+      // fallback.
+      if (_toIsolate != null) {
+        _toIsolate!.send(_IsolateCmd.stop);
+        try {
+          await (_exitCompleter?.future ?? Future<void>.value())
+              .timeout(const Duration(seconds: 2));
+        } on TimeoutException {
+          _isolate?.kill(priority: Isolate.immediate);
+        }
+      } else {
+        _isolate!.kill(priority: Isolate.immediate);
+      }
+    }
+    _closePorts();
     _isolate = null;
     _toIsolate = null;
     _busy = false;
@@ -138,7 +220,7 @@ class _FrameMsg {
   });
 }
 
-enum _IsolateCmd { ready }
+enum _IsolateCmd { ready, stop }
 
 @pragma('vm:entry-point')
 Future<void> _isolateEntry(_IsolateArgs args) async {
@@ -152,6 +234,13 @@ Future<void> _isolateEntry(_IsolateArgs args) async {
   args.sendPort.send(_IsolateCmd.ready);
 
   await for (final msg in fromMain) {
+    if (msg == _IsolateCmd.stop) {
+      // Clean shutdown: release the interpreter's native memory before the
+      // isolate exits — Isolate.kill would leak it (§ fix for mem_soak growth).
+      runner.close();
+      fromMain.close();
+      break;
+    }
     if (msg is _FrameMsg) {
       if (!runner.isReady) {
         args.sendPort.send({'detections': <Map>[], 'preprocess_ms': 0, 'infer_ms': 0});

@@ -18,9 +18,12 @@ class TfliteRunner {
 
   void initializeFromBuffer(Uint8List modelBytes, List<String> labels) {
     _labels = labels;
-    // YOLOv8 custom ops are not supported by NNAPI — run on CPU threads only.
-    final options = InterpreterOptions()..threads = 4;
     try {
+      // InterpreterOptions() triggers the native library load, so it must be
+      // inside the try — otherwise a missing/broken libtensorflowlite kills
+      // the whole inference isolate instead of degrading to empty detections.
+      // YOLOv8 custom ops are not supported by NNAPI — run on CPU threads only.
+      final options = InterpreterOptions()..threads = 4;
       _interpreter = Interpreter.fromBuffer(modelBytes, options: options);
       _interpreter!.allocateTensors();
 

@@ -20,7 +20,13 @@ class ArDepthChannel {
   /// Throws [PlatformException] if ARCore is unavailable.
   Future<int> start() async {
     final id = await _method.invokeMethod<int>('start');
-    return id!;
+    if (id == null) {
+      throw PlatformException(
+        code: 'AR_NO_TEXTURE',
+        message: 'native start returned no texture id',
+      );
+    }
+    return id;
   }
 
   Future<void> stop() => _method.invokeMethod('stop');

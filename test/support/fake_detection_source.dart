@@ -6,12 +6,18 @@ import 'package:hapticway/inference/detection.dart';
 
 /// Test double for [DetectionSource] — lets a test push detection/timing
 /// events on demand without ever spawning a real background isolate.
+///
+/// Unlike the real [CameraIsolate] (fresh instance per pipeline start), the
+/// same fake instance is reused across pause/resume cycles in widget tests,
+/// so [start] recreates the stream controllers if a previous [stop] closed
+/// them.
 class FakeDetectionSource implements DetectionSource {
-  final _detectionController = StreamController<List<Detection>>.broadcast();
-  final _timingController = StreamController<TimingData>.broadcast();
+  var _detectionController = StreamController<List<Detection>>.broadcast();
+  var _timingController = StreamController<TimingData>.broadcast();
 
   bool started = false;
   bool stopped = false;
+  int startCount = 0;
 
   @override
   Stream<List<Detection>> get detections => _detectionController.stream;
@@ -21,7 +27,13 @@ class FakeDetectionSource implements DetectionSource {
 
   @override
   Future<void> start() async {
+    if (_detectionController.isClosed) {
+      _detectionController = StreamController<List<Detection>>.broadcast();
+      _timingController = StreamController<TimingData>.broadcast();
+    }
     started = true;
+    stopped = false;
+    startCount++;
   }
 
   @override
@@ -35,4 +47,7 @@ class FakeDetectionSource implements DetectionSource {
       _detectionController.add(detections);
 
   void addTiming(TimingData data) => _timingController.add(data);
+
+  void addDetectionError(Object error) =>
+      _detectionController.addError(error);
 }
