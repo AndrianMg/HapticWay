@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.Surface
 import android.view.WindowManager
 import com.google.ar.core.ArCoreApk
@@ -57,6 +58,7 @@ class ArDepthChannel(
     companion object {
         const val METHOD_CH = "hapticway/depth"
         const val FRAME_CH  = "hapticway/frames"
+        private const val TAG = "ArDepthChannel"
 
         // Minimal OES texture pass-through shaders.
         private const val VERT_SRC = """
@@ -122,26 +124,25 @@ class ArDepthChannel(
     private var loopHandler: Handler? = null
     @Volatile private var running = false
 
-    // Latest cached depth image data. Raw plane bytes are kept (not a ShortArray)
-    // so sampleDepth can honour rowStride/pixelStride — the plane may have row
-    // padding, so width*2 bytes-per-row cannot be assumed.
-    @Volatile private var depthBytes: ByteArray? = null
-    @Volatile private var depthRowStride = 0
-    @Volatile private var depthPixelStride = 0
-    @Volatile private var depthW = 0
-    @Volatile private var depthH = 0
-
-    // Cached IMAGE_NORMALIZED → TEXTURE_NORMALIZED affine (the space the depth
-    // image is indexed in). Computed per frame from the live Frame; applied in
-    // sampleDepth, which runs off-frame (async method channel) with no Frame.
-    // tex_x = tA*nx + tC*ny + tTx ;  tex_y = tB*nx + tD*ny + tTy
-    @Volatile private var depthMapValid = false
-    @Volatile private var tA = 0f
-    @Volatile private var tB = 0f
-    @Volatile private var tC = 0f
-    @Volatile private var tD = 0f
-    @Volatile private var tTx = 0f
-    @Volatile private var tTy = 0f
+    // Latest cached depth image data + the IMAGE_NORMALIZED → TEXTURE_NORMALIZED
+    // affine it was captured with, published as ONE immutable snapshot so
+    // sampleDepth (platform thread) can never pair frame N's bytes with frame
+    // N+1's affine or dimensions (torn read across the @Volatile boundary).
+    //
+    // Raw plane bytes are kept (not a ShortArray) so sampleDepth can honour
+    // rowStride/pixelStride — the plane may have row padding, so width*2
+    // bytes-per-row cannot be assumed.
+    // Affine: tex_x = a*nx + c*ny + tx ;  tex_y = b*nx + d*ny + ty
+    private class DepthSnapshot(
+        val bytes: ByteArray,
+        val rowStride: Int,
+        val pixelStride: Int,
+        val w: Int,
+        val h: Int,
+        val a: Float, val b: Float, val c: Float, val d: Float,
+        val tx: Float, val ty: Float,
+    )
+    @Volatile private var depthSnapshot: DepthSnapshot? = null
 
     init {
         methodCh.setMethodCallHandler(::handleMethod)
@@ -158,11 +159,18 @@ class ArDepthChannel(
             "start"       -> start(result)
             "stop"        -> { stop(); result.success(null) }
             "sampleDepth" -> {
-                val x1 = (call.argument<Any>("x1") as Number).toFloat()
-                val y1 = (call.argument<Any>("y1") as Number).toFloat()
-                val x2 = (call.argument<Any>("x2") as Number).toFloat()
-                val y2 = (call.argument<Any>("y2") as Number).toFloat()
-                result.success(sampleDepth(x1, y1, x2, y2))
+                val x1 = (call.argument<Any>("x1") as? Number)?.toFloat()
+                val y1 = (call.argument<Any>("y1") as? Number)?.toFloat()
+                val x2 = (call.argument<Any>("x2") as? Number)?.toFloat()
+                val y2 = (call.argument<Any>("y2") as? Number)?.toFloat()
+                if (x1 == null || y1 == null || x2 == null || y2 == null ||
+                    !x1.isFinite() || !y1.isFinite() || !x2.isFinite() || !y2.isFinite()
+                ) {
+                    // NaN would otherwise survive floor/ceil into the pixel scan.
+                    result.error("BAD_ARGS", "sampleDepth needs finite numeric x1,y1,x2,y2", null)
+                } else {
+                    result.success(sampleDepth(x1, y1, x2, y2))
+                }
             }
             else -> result.notImplemented()
         }
@@ -173,6 +181,14 @@ class ArDepthChannel(
     @SuppressLint("MissingPermission")
     private fun start(result: MethodChannel.Result) {
         try {
+            // A start while already running (Flutter hot restart resets Dart
+            // state but not this object) would silently overwrite session,
+            // previewEntry and loopThread, leaking all three. Stop first.
+            if (running || session != null || loopThread != null) {
+                Log.w(TAG, "start() while already running — stopping stale session first")
+                stop()
+            }
+
             val avail = ArCoreApk.getInstance().checkAvailability(context)
             if (avail.isTransient) {
                 result.error("AR_TRANSIENT", "ARCore availability check in progress", null); return
@@ -206,10 +222,11 @@ class ArDepthChannel(
             // All EGL/GL and ARCore setup must run on the HandlerThread so that the
             // EGL context is current on the thread that calls session.update().
             h.post {
+                var s: Session? = null
                 try {
                     setupEgl()
 
-                    val s = Session(context)
+                    s = Session(context)
                     s.configure(Config(s).apply {
                         depthMode           = Config.DepthMode.AUTOMATIC
                         updateMode          = Config.UpdateMode.LATEST_CAMERA_IMAGE
@@ -226,12 +243,30 @@ class ArDepthChannel(
                     mainHandler.post { result.success(entry.id()) }
                     frameLoop()
                 } catch (e: Exception) {
+                    // Tear down everything this attempt created — the previous
+                    // version leaked the HandlerThread, EGL context and
+                    // SurfaceTexture on a failed start. We are ON the loop
+                    // thread here, so releaseGl() is safe to call inline.
+                    Log.w(TAG, "AR start failed — tearing down", e)
+                    try { s?.close() } catch (t: Throwable) {
+                        Log.w(TAG, "session close during failed start", t)
+                    }
+                    session = null
+                    running = false
+                    try { releaseGl() } catch (t: Throwable) {
+                        Log.w(TAG, "releaseGl during failed start", t)
+                    }
                     mainHandler.post {
+                        previewEntry?.release(); previewEntry = null
+                        loopThread?.quitSafely(); loopThread = null; loopHandler = null
                         result.error("AR_START_ERROR", "${e.javaClass.simpleName}: ${e.message}", null)
                     }
                 }
             }
         } catch (e: Exception) {
+            Log.w(TAG, "AR start failed before loop-thread setup", e)
+            previewEntry?.release(); previewEntry = null
+            loopThread?.quitSafely(); loopThread = null; loopHandler = null
             result.error("AR_START_ERROR", "${e.javaClass.simpleName}: ${e.message}", null)
         }
     }
@@ -247,23 +282,13 @@ class ArDepthChannel(
 
             // Blit OES texture → EGL window surface → Flutter SurfaceTexture → Texture widget.
             // Isolated so a GL error never skips the inference path below.
-            try { renderPreview() } catch (_: Exception) {}
+            try { renderPreview() } catch (e: Exception) {
+                Log.w(TAG, "preview render failed", e)
+            }
 
             // Depth (only available while ARCore is tracking the environment)
             if (frame.camera.trackingState == TrackingState.TRACKING) {
                 try {
-                    frame.acquireDepthImage16Bits().use { di ->
-                        val plane = di.planes[0]
-                        val src = plane.buffer
-                        val bytes = ByteArray(src.remaining())
-                        src.get(bytes)
-                        depthBytes = bytes
-                        depthRowStride = plane.rowStride
-                        depthPixelStride = plane.pixelStride
-                        depthW = di.width
-                        depthH = di.height
-                    }
-
                     // Cache the IMAGE_NORMALIZED → TEXTURE_NORMALIZED affine so
                     // sampleDepth can map detection-frame coords into depth-image
                     // pixels. The depth image is indexed in TEXTURE_NORMALIZED;
@@ -276,10 +301,25 @@ class ArDepthChannel(
                         Coordinates2d.IMAGE_NORMALIZED, inPts,
                         Coordinates2d.TEXTURE_NORMALIZED, outPts,
                     )
-                    tTx = outPts[0]; tTy = outPts[1]
-                    tA = outPts[2] - tTx; tB = outPts[3] - tTy
-                    tC = outPts[4] - tTx; tD = outPts[5] - tTy
-                    depthMapValid = true
+                    val tx = outPts[0]; val ty = outPts[1]
+
+                    frame.acquireDepthImage16Bits().use { di ->
+                        val plane = di.planes[0]
+                        val src = plane.buffer
+                        val bytes = ByteArray(src.remaining())
+                        src.get(bytes)
+                        // Publish bytes + dims + affine as one atomic snapshot.
+                        depthSnapshot = DepthSnapshot(
+                            bytes = bytes,
+                            rowStride = plane.rowStride,
+                            pixelStride = plane.pixelStride,
+                            w = di.width,
+                            h = di.height,
+                            a = outPts[2] - tx, b = outPts[3] - ty,
+                            c = outPts[4] - tx, d = outPts[5] - ty,
+                            tx = tx, ty = ty,
+                        )
+                    }
                 } catch (_: NotYetAvailableException) {}
             }
 
@@ -294,7 +334,11 @@ class ArDepthChannel(
             img?.use { sendInferenceFrame(it) }
 
         } catch (_: SessionPausedException) { return }
-          catch (_: Exception) {}
+          catch (e: Exception) {
+              // Keep the swallow-and-continue isolation, but a persistent error
+              // retried at 30 fps must at least be visible in logcat.
+              Log.w(TAG, "frame loop error", e)
+          }
 
         if (running) loopHandler?.postDelayed(::frameLoop, 33L)
     }
@@ -381,16 +425,19 @@ class ArDepthChannel(
      * Statistic: 20th percentile of the cleaned valid set (unchanged).
      */
     fun sampleDepth(nx1: Float, ny1: Float, nx2: Float, ny2: Float): Double {
-        val data = depthBytes ?: return -1.0
-        if (!depthMapValid) return -1.0
+        // One volatile read — bytes, dims and affine are internally consistent.
+        val snap = depthSnapshot ?: return -1.0
+        val data = snap.bytes
+        val depthW = snap.w
+        val depthH = snap.h
 
         // Map the two opposite bbox corners IMAGE_NORMALIZED → TEXTURE_NORMALIZED
         // → depth pixels. A ≤90° display rotation keeps the region axis-aligned,
         // so min/max of the mapped corners gives the depth-pixel scan rectangle.
-        val ax = (tA * nx1 + tC * ny1 + tTx) * depthW
-        val ay = (tB * nx1 + tD * ny1 + tTy) * depthH
-        val bx = (tA * nx2 + tC * ny2 + tTx) * depthW
-        val by = (tB * nx2 + tD * ny2 + tTy) * depthH
+        val ax = (snap.a * nx1 + snap.c * ny1 + snap.tx) * depthW
+        val ay = (snap.b * nx1 + snap.d * ny1 + snap.ty) * depthH
+        val bx = (snap.a * nx2 + snap.c * ny2 + snap.tx) * depthW
+        val by = (snap.b * nx2 + snap.d * ny2 + snap.ty) * depthH
 
         var pxLo = floor(min(ax, bx)).toInt()
         var pxHi = ceil(max(ax, bx)).toInt()
@@ -410,9 +457,9 @@ class ArDepthChannel(
         val buf = IntArray(region)
         var n = 0
         for (row in pyLo..pyHi) {
-            val rowBase = row * depthRowStride
+            val rowBase = row * snap.rowStride
             for (col in pxLo..pxHi) {
-                val off = rowBase + col * depthPixelStride
+                val off = rowBase + col * snap.pixelStride
                 val raw = (data[off].toInt() and 0xFF) or ((data[off + 1].toInt() and 0xFF) shl 8)
                 // Depth = low 13 bits (mm). On this device the confidence bits
                 // (raw shr 13) are 0 for every valid pixel (Android DEPTH16:
@@ -441,8 +488,7 @@ class ArDepthChannel(
         loopThread = null; loopHandler = null
         session?.pause(); session?.close(); session = null
         previewEntry?.release(); previewEntry = null
-        depthBytes = null
-        depthMapValid = false
+        depthSnapshot = null
     }
 
     // ── EGL / GL setup ────────────────────────────────────────────────────────
