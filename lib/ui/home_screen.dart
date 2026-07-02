@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../benchmark/benchmark_runner.dart';
@@ -26,10 +27,20 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── Prefs ──────────────────────────────────────────────────────────────────
   bool _hapticOverride = false;
   double _hapticK = kHapticConstantK;
+
+  // ── App lifecycle ──────────────────────────────────────────────────────────
+  // The whole pipeline (ARCore session, inference isolate, depth-poll timer)
+  // must stop on pause — otherwise the phone keeps vibrating in the user's
+  // pocket and the camera stays live while backgrounded.
+  bool _pipelineRunning = false;
+  bool _resumeAfterPause = false;
+  bool _wozOpen = false;
+  int _depthFailures = 0;
+  Future<void>? _pendingStop;
 
   // ── §6.1 ARCore ────────────────────────────────────────────────────────────
   // textureId returned by ArDepthChannel.start(); drives the Texture widget.
@@ -74,8 +85,32 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _loadPrefs();
-    _initAr();
+    _startPipeline();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `paused` only — `inactive` also fires for permission dialogs and the
+    // notification shade, which would thrash the ARCore session.
+    if (state == AppLifecycleState.paused && _pipelineRunning) {
+      _resumeAfterPause = true;
+      _setStatus('Paused');
+      _pendingStop = _stopPipeline();
+      unawaited(_pendingStop);
+    } else if (state == AppLifecycleState.resumed && _resumeAfterPause) {
+      _resumeAfterPause = false;
+      unawaited(_resumePipeline());
+    }
+  }
+
+  Future<void> _resumePipeline() async {
+    // A fast pause→resume must not start a new pipeline while the old one is
+    // still tearing down — stop() would null out the fresh isolate reference.
+    await _pendingStop;
+    _pendingStop = null;
+    await _startPipeline();
   }
 
   Future<void> _loadPrefs() async {
@@ -88,26 +123,69 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── §6.1: start ARCore; it owns the camera exclusively ────────────────────
-  Future<void> _initAr() async {
+  Future<void> _startPipeline() async {
+    if (_pipelineRunning) return;
     try {
       final texId = await ArDepthChannel.instance.start();
       if (!mounted) return;
       setState(() => _textureId = texId);
 
+      // Fresh instance per start — a stopped CameraIsolate cannot restart
+      // (its broadcast controllers are closed).
       _isolate = widget.detectionSource ?? CameraIsolate();
       await _isolate!.start();
 
-      _detSub   = _isolate!.detections.listen(_onDetections);
+      _detSub = _isolate!.detections.listen(
+        _onDetections,
+        onError: (Object e) => _setStatus('Detection unavailable: $e'),
+      );
       _timingSub = _isolate!.timing.listen(_onTiming);
 
       _setStatus('Scanning…');
-
-      _depthPollTimer = Timer.periodic(
-        const Duration(milliseconds: 300),
-        (_) => _pollDepth(),
-      );
-    } on Exception catch (e) {
+      _startDepthPoll();
+      _pipelineRunning = true;
+    } on PlatformException catch (e) {
+      _setStatus('Camera unavailable: ${e.message ?? e.code}');
+    } catch (e) {
+      // Errors too (TypeError, FlutterError from a missing asset) — an
+      // `on Exception` clause would miss them and leave the spinner forever.
       _setStatus('Camera unavailable: $e');
+    }
+  }
+
+  void _startDepthPoll() {
+    if (_wozOpen) return;
+    _depthPollTimer?.cancel();
+    _depthPollTimer = Timer.periodic(
+      const Duration(milliseconds: 300),
+      (_) => _pollDepth(),
+    );
+  }
+
+  Future<void> _stopPipeline() async {
+    _pipelineRunning = false;
+    _depthPollTimer?.cancel();
+    _depthPollTimer = null;
+    // Broadcast-subscription cancel detaches the listener synchronously and
+    // its returned future is the root-zone _nullFuture, which never resumes
+    // inside a fake-async test zone — never await it here.
+    unawaited(_timingSub?.cancel());
+    _timingSub = null;
+    unawaited(_detSub?.cancel());
+    _detSub = null;
+    final isolate = _isolate;
+    _isolate = null;
+    // AR session (camera) down first — that is the safety-critical part —
+    // then the inference isolate.
+    await ArDepthChannel.instance.stop();
+    await isolate?.stop();
+    // The texture id is dead once the native session stops — rendering it
+    // would show a frozen/invalid frame on resume until the new id arrives.
+    if (mounted) {
+      setState(() {
+        _textureId = null;
+        _hapticLevel = 0.0;
+      });
     }
   }
 
@@ -130,6 +208,12 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!_hapticOverride && depthM < kMaxDistanceMeters) {
         Tacton.obstacleAhead(amplitude);
       }
+      _depthFailures = 0;
+    } catch (e) {
+      // A lost/paused AR session throws here every 300 ms — announce once at
+      // the threshold transition, never per tick.
+      _depthFailures++;
+      if (_depthFailures == 5) _setStatus('Depth sensing unavailable');
     } finally {
       _depthPollBusy = false;
     }
@@ -202,6 +286,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _toggleOverride() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() => _hapticOverride = !_hapticOverride);
     await prefs.setBool(kPrefKeyOverride, _hapticOverride);
     StatusAnnouncer.announce(
@@ -232,18 +317,18 @@ class _HomeScreenState extends State<HomeScreen> {
     _activePointers.clear();
     if (!mounted) return;
     // Pause the real depth radar so simulated events aren't contaminated by
-    // real-depth vibrations during a WoZ session.
+    // real-depth vibrations during a WoZ session. _wozOpen also stops a
+    // pause/resume cycle from restarting the timer underneath the session.
+    _wozOpen = true;
     _depthPollTimer?.cancel();
     _depthPollTimer = null;
     await Navigator.push(
       context,
       MaterialPageRoute<void>(builder: (_) => const WozScreen()),
     );
+    _wozOpen = false;
     if (!mounted) return;
-    _depthPollTimer = Timer.periodic(
-      const Duration(milliseconds: 300),
-      (_) => _pollDepth(),
-    );
+    _startDepthPoll();
   }
 
   void _openSettings(BuildContext context) {
@@ -281,12 +366,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _wozTrigger?.cancel();
-    _depthPollTimer?.cancel();
-    _timingSub?.cancel();
-    _detSub?.cancel();
-    _isolate?.stop();
-    ArDepthChannel.instance.stop();
+    unawaited(_stopPipeline());
     super.dispose();
   }
 

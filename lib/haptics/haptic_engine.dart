@@ -1,8 +1,15 @@
+import 'package:flutter/foundation.dart';
 import 'package:vibration/vibration.dart';
 
 class HapticEngine {
   static const int _maxPulsesPerSecond = 2;
   static DateTime? _lastPulse;
+
+  /// Clears static throttle state so tests don't bleed into each other.
+  @visibleForTesting
+  static void reset() {
+    _lastPulse = null;
+  }
 
   static Future<void> vibrate(double amplitude, Duration duration) async {
     final now = DateTime.now();

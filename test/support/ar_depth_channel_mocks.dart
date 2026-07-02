@@ -12,6 +12,12 @@ class ArDepthChannelMock {
   double depthMeters = -1.0;
   final List<MethodCall> calls = [];
 
+  /// When set, 'start' throws this instead of returning [textureId].
+  PlatformException? startError;
+
+  /// When true, 'start' returns null (exercises the AR_NO_TEXTURE path).
+  bool startReturnsNull = false;
+
   MockStreamHandlerEventSink? _frameSink;
 
   void install() {
@@ -20,6 +26,8 @@ class ArDepthChannelMock {
       calls.add(call);
       switch (call.method) {
         case 'start':
+          if (startError != null) throw startError!;
+          if (startReturnsNull) return null;
           return textureId;
         case 'sampleDepth':
           return depthMeters;
