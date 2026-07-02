@@ -25,6 +25,9 @@ class FakeVibrationPlatform extends VibrationPlatform {
   bool hasAmplitudeControlValue = true;
   final List<VibrateCall> calls = [];
 
+  /// When set, every `vibrate(...)` call throws this instead of recording.
+  Object? vibrateError;
+
   @override
   Future<bool> hasVibrator() async => hasVibratorValue;
 
@@ -42,6 +45,7 @@ class FakeVibrationPlatform extends VibrationPlatform {
     List<int> intensities = const [],
     int amplitude = -1,
   }) async {
+    if (vibrateError != null) throw vibrateError!;
     calls.add(VibrateCall(
       duration: duration,
       pattern: pattern,
