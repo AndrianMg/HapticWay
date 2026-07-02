@@ -92,7 +92,8 @@ class _WozScreenState extends State<WozScreen> {
   void dispose() {
     _clock?.cancel();
     // Close any session left open so the file isn't truncated mid-write.
-    _log.close();
+    // close() is claim-then-close, so racing _toggleSession is safe.
+    unawaited(_log.close());
     super.dispose();
   }
 

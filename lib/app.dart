@@ -44,6 +44,7 @@ class _StartupRouterState extends State<_StartupRouter> {
 
   Future<void> _checkOnboarding() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     setState(() {
       _onboardingComplete = prefs.getBool(kPrefKeyOnboardingComplete) ?? false;
     });

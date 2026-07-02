@@ -288,7 +288,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() => _hapticOverride = !_hapticOverride);
-    await prefs.setBool(kPrefKeyOverride, _hapticOverride);
+    try {
+      await prefs.setBool(kPrefKeyOverride, _hapticOverride);
+    } catch (e) {
+      debugPrint('home: prefs write failed: $e');
+    }
     StatusAnnouncer.announce(
       _hapticOverride ? 'Haptic alerts disabled' : 'Haptic alerts enabled',
     );
@@ -341,6 +345,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _benchmark.start(
           condition: benchmarkCondition,
           onComplete: _onBenchmarkComplete,
+          onError: _onBenchmarkError,
         );
       }
     });
@@ -352,6 +357,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       setState(() => _statusText =
           'Benchmarking ${_benchmark.condition}… ${_benchmark.collected}/${BenchmarkRunner.kSamples}');
     }
+  }
+
+  void _onBenchmarkError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Benchmark failed: $error'),
+        duration: const Duration(seconds: 6),
+      ),
+    );
   }
 
   void _onBenchmarkComplete(String path) {

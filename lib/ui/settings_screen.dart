@@ -41,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadPrefs() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
     final k = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     setState(() {
       _k = k;
@@ -57,13 +58,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveK(double k) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble(kPrefKeyHapticK, k);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble(kPrefKeyHapticK, k);
+    } catch (e) {
+      debugPrint('settings: prefs write failed: $e');
+    }
   }
 
   Future<void> _saveOverride(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(kPrefKeyOverride, value);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(kPrefKeyOverride, value);
+    } catch (e) {
+      debugPrint('settings: prefs write failed: $e');
+    }
     StatusAnnouncer.announce(
       value ? 'Haptic alerts disabled' : 'Haptic alerts enabled',
     );

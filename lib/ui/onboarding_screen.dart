@@ -18,6 +18,7 @@ class OnboardingScreen extends StatefulWidget {
 
 class _OnboardingScreenState extends State<OnboardingScreen> {
   bool _permissionDenied = false;
+  bool _permanentlyDenied = false;
   bool _loading = false;
 
   Future<void> _onAgree() async {
@@ -26,16 +27,23 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final status = await Permission.camera.request();
     if (!mounted) return;
 
-    if (status.isDenied || status.isPermanentlyDenied) {
+    // Allowlist granted only — restricted/limited/provisional must not fall
+    // through to a HomeScreen with a non-functional camera.
+    if (!status.isGranted) {
       setState(() {
         _permissionDenied = true;
+        _permanentlyDenied = status.isPermanentlyDenied;
         _loading = false;
       });
       return;
     }
 
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(kPrefKeyOnboardingComplete, true);
+    try {
+      await prefs.setBool(kPrefKeyOnboardingComplete, true);
+    } catch (e) {
+      debugPrint('onboarding: prefs write failed: $e');
+    }
 
     if (!mounted) return;
     Navigator.pushReplacement(
@@ -264,25 +272,66 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   Widget _buildPermissionError() {
-    return Semantics(
-      liveRegion: true,
-      label: 'Camera permission required. '
-          'Go to Settings, then Apps, then HapticWay, '
-          'then Permissions to enable camera access.',
-      excludeSemantics: true,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2A0A0A),
-          border: Border.all(color: Colors.redAccent),
-          borderRadius: BorderRadius.circular(8),
+    // Once permanently denied, re-requesting is a dead end (the system never
+    // re-prompts) — the only way forward is the app's settings page.
+    final message = _permanentlyDenied
+        ? 'Camera permission is required for obstacle detection. '
+            'The system will no longer ask — enable it in system settings.'
+        : 'Camera permission is required for obstacle detection. '
+            'Go to Settings → Apps → HapticWay → Permissions to enable it.';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          liveRegion: true,
+          label: _permanentlyDenied
+              ? 'Camera permission required. The system will no longer ask. '
+                  'Use the open settings button below to enable camera access.'
+              : 'Camera permission required. '
+                  'Go to Settings, then Apps, then HapticWay, '
+                  'then Permissions to enable camera access.',
+          excludeSemantics: true,
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A0A0A),
+              border: Border.all(color: Colors.redAccent),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              message,
+              style: const TextStyle(
+                  color: Colors.redAccent, fontSize: 13, height: 1.4),
+            ),
+          ),
         ),
-        child: const Text(
-          'Camera permission is required for obstacle detection. '
-          'Go to Settings → Apps → HapticWay → Permissions to enable it.',
-          style: TextStyle(color: Colors.redAccent, fontSize: 13, height: 1.4),
-        ),
-      ),
+        if (_permanentlyDenied) ...[
+          const SizedBox(height: 12),
+          Semantics(
+            label: 'Open system settings to enable camera access',
+            button: true,
+            excludeSemantics: true,
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton(
+                onPressed: openAppSettings,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF0D1B2A),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: const BorderSide(color: Color(0xFF4CAF50)),
+                  ),
+                ),
+                child: const Text(
+                  'OPEN SETTINGS',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
     );
   }
 

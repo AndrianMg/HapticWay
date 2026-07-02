@@ -165,4 +165,33 @@ void main() {
     expect(result.first.label, 'bicycle'); // larger area comes first
     expect(result.last.label, 'person');
   });
+
+  group('malformed output tensors', () {
+    test('a truncated raw matrix (fewer than 5 rows) returns empty', () {
+      final result = Postprocess.parseYolo(
+        raw: [
+          [0.5],
+          [0.5],
+          [0.2],
+          [0.2],
+        ], // only box rows, no class scores
+        labels: _labels,
+        scale: _identityArgs.scale, padX: _identityArgs.padX,
+        padY: _identityArgs.padY, frameW: _identityArgs.frameW,
+        frameH: _identityArgs.frameH,
+      );
+      expect(result, isEmpty);
+    });
+
+    test('a zero-anchor raw matrix returns empty', () {
+      final result = Postprocess.parseYolo(
+        raw: List.generate(11, (_) => const <double>[]),
+        labels: _labels,
+        scale: _identityArgs.scale, padX: _identityArgs.padX,
+        padY: _identityArgs.padY, frameW: _identityArgs.frameW,
+        frameH: _identityArgs.frameH,
+      );
+      expect(result, isEmpty);
+    });
+  });
 }

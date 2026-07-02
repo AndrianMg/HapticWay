@@ -50,6 +50,9 @@ class FramePreprocessor {
     required int uvPixelStride,
     int rotationDegrees = 0,
   }) {
+    if (width <= 0 || height <= 0) {
+      throw ArgumentError('degenerate frame ${width}x$height');
+    }
     // Step 1: YUV → RGB with optional 90° CW rotation fused into the same pass.
     // The S20 Ultra sensor delivers landscape frames (640×480) regardless of
     // device orientation. In portrait the model sees the world sideways, causing
@@ -91,9 +94,11 @@ class FramePreprocessor {
     }
 
     // Step 2: letterbox — single uniform scale, centred, padded to a square.
+    // newW/newH floored at 1 so fxScale/fyScale can never divide by zero on
+    // extreme aspect ratios.
     final double scale = math.min(modelSize / frameW, modelSize / frameH);
-    final int newW = (frameW * scale).round();
-    final int newH = (frameH * scale).round();
+    final int newW = math.max(1, (frameW * scale).round());
+    final int newH = math.max(1, (frameH * scale).round());
     final int padX = ((modelSize - newW) / 2).floor();
     final int padY = ((modelSize - newH) / 2).floor();
 

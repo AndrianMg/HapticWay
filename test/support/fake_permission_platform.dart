@@ -5,6 +5,7 @@ import 'package:permission_handler_platform_interface/permission_handler_platfor
 /// `PermissionHandlerPlatform.instance = FakePermissionHandlerPlatform()`.
 class FakePermissionHandlerPlatform extends PermissionHandlerPlatform {
   PermissionStatus statusToReturn = PermissionStatus.granted;
+  bool openAppSettingsCalled = false;
 
   @override
   Future<PermissionStatus> checkPermissionStatus(Permission permission) async =>
@@ -15,7 +16,10 @@ class FakePermissionHandlerPlatform extends PermissionHandlerPlatform {
       ServiceStatus.enabled;
 
   @override
-  Future<bool> openAppSettings() async => true;
+  Future<bool> openAppSettings() async {
+    openAppSettingsCalled = true;
+    return true;
+  }
 
   @override
   Future<Map<Permission, PermissionStatus>> requestPermissions(

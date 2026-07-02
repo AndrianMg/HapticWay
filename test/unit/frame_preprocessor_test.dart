@@ -109,4 +109,23 @@ void main() {
     // Content band (rows 40-279) holds the converted frame, uniform Y=50.
     expect(_pixelAt(result.tensor, 200, 160), (50, 50, 50));
   });
+
+  test('zero-dimension frames are rejected instead of dividing by zero', () {
+    expect(
+      () => FramePreprocessor.process(
+        yPlane: Uint8List(0), uPlane: Uint8List(0), vPlane: Uint8List(0),
+        width: 0, height: 480,
+        yRowStride: 0, uvRowStride: 0, uvPixelStride: 1,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => FramePreprocessor.process(
+        yPlane: Uint8List(0), uPlane: Uint8List(0), vPlane: Uint8List(0),
+        width: 640, height: 0,
+        yRowStride: 640, uvRowStride: 320, uvPixelStride: 1,
+      ),
+      throwsArgumentError,
+    );
+  });
 }

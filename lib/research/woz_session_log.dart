@@ -60,16 +60,19 @@ class WozSessionLog {
   }
 
   Future<void> close() async {
-    if (_sink == null) return;
+    // Claim the sink before any await so a concurrent close (dispose vs END
+    // button) can't double-flush or write session_end twice.
+    final sink = _sink;
+    if (sink == null) return;
+    _sink = null;
     final now = DateTime.now();
-    _log({
+    sink.writeln(jsonEncode({
       'event': 'session_end',
       'ts': now.millisecondsSinceEpoch,
       'duration_s': now.difference(_sessionStart!).inSeconds,
-    });
-    await _sink!.flush();
-    await _sink!.close();
-    _sink = null;
+    }));
+    await sink.flush();
+    await sink.close();
   }
 
   void _log(Map<String, dynamic> entry) {

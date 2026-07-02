@@ -28,6 +28,9 @@ class Postprocess {
     required int frameH,
     int modelSize = 320,
   }) {
+    // A malformed/truncated output tensor must not RangeError the isolate.
+    if (raw.length < 5 || raw[0].isEmpty) return const [];
+
     final numAnchors = raw[0].length;
     final numClasses = raw.length - 4;
 

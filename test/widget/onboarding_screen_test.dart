@@ -82,8 +82,54 @@ void main() {
     expect(find.byType(HomeScreen), findsNothing);
     expect(find.byType(OnboardingScreen), findsOneWidget);
     expect(find.textContaining('Camera permission is required'), findsOneWidget);
+    // Plain denial can be retried via the system prompt — no settings button.
+    expect(find.text('OPEN SETTINGS'), findsNothing);
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool(kPrefKeyOnboardingComplete), isNot(true));
   });
+
+  testWidgets(
+    'permanent denial shows a working OPEN SETTINGS button and stays put',
+    (tester) async {
+      fakePermission.statusToReturn = PermissionStatus.permanentlyDenied;
+      await tester.pumpWidget(buildApp());
+
+      await tester.ensureVisible(find.text(_agreeButtonText));
+      await tester.tap(find.text(_agreeButtonText));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(OnboardingScreen), findsOneWidget);
+      expect(find.textContaining('no longer ask'), findsOneWidget);
+
+      final settingsButton = find.text('OPEN SETTINGS');
+      await tester.ensureVisible(settingsButton);
+      await tester.tap(settingsButton);
+      await tester.pump();
+
+      expect(fakePermission.openAppSettingsCalled, isTrue);
+      expect(find.byType(HomeScreen), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'restricted status is not treated as granted',
+    (tester) async {
+      fakePermission.statusToReturn = PermissionStatus.restricted;
+      await tester.pumpWidget(buildApp());
+
+      await tester.ensureVisible(find.text(_agreeButtonText));
+      await tester.tap(find.text(_agreeButtonText));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(HomeScreen), findsNothing);
+      expect(find.byType(OnboardingScreen), findsOneWidget);
+      expect(find.textContaining('Camera permission is required'), findsOneWidget);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getBool(kPrefKeyOnboardingComplete), isNot(true));
+    },
+  );
 }

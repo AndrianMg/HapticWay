@@ -8,6 +8,7 @@ class BenchmarkRunner {
   bool _active = false;
   String _condition = 'unspecified';
   void Function(String path)? _onComplete;
+  void Function(Object error)? _onError;
 
   bool get isActive => _active;
   int get collected => _samples.length;
@@ -17,11 +18,13 @@ class BenchmarkRunner {
   void start({
     required String condition,
     void Function(String path)? onComplete,
+    void Function(Object error)? onError,
   }) {
     _samples.clear();
     _active = true;
     _condition = condition;
     _onComplete = onComplete;
+    _onError = onError;
   }
 
   void addSample(TimingData data) {
@@ -30,7 +33,11 @@ class BenchmarkRunner {
     if (_samples.length >= kSamples) {
       _active = false;
       ReportWriter.writeCsv(List.unmodifiable(_samples), condition: _condition)
-          .then((path) => _onComplete?.call(path));
+          .then((path) => _onComplete?.call(path))
+          .catchError((Object e) {
+        // Disk full / permission failure must not vanish — the run is lost.
+        _onError?.call(e);
+      });
     }
   }
 }
