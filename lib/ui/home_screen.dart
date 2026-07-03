@@ -283,6 +283,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       if (direction != ObstacleDirection.ahead &&
           !_hapticOverride &&
+          !_wozOpen &&
           depthM > 0 &&
           depthM < kMaxDistanceMeters) {
         unawaited(Tacton.obstacle(

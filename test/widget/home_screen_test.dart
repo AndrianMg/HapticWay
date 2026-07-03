@@ -282,4 +282,46 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('a WoZ session in progress mutes real directional tactons', (tester) async {
+    // depthMock.depthMeters stays at its default (-1.0, no valid reading)
+    // through the 3-finger hold below, so the still-live 300ms centre-window
+    // depth-poll radar cannot fire a legitimate pulse in that window and
+    // contaminate the isEmpty assertion — this test is about the directional
+    // tacton path specifically.
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    // Simulate a researcher's 3-finger long press: three simultaneous
+    // pointers held for the 800ms trigger window, opening the WoZ panel.
+    final pointers = [
+      await tester.startGesture(const Offset(100, 200)),
+      await tester.startGesture(const Offset(400, 200)),
+      await tester.startGesture(const Offset(700, 200)),
+    ];
+    await tester.pump(const Duration(milliseconds: 800)); // crosses the long-press trigger
+    await tester.pump(); // Navigator.push starts building the WozScreen route
+    await tester.pump(); // WozScreen's _loadK() prefs await resolves
+    for (final p in pointers) {
+      await p.up();
+    }
+    await tester.pump();
+
+    // Now that the WoZ panel is open (and the depth-poll timer cancelled),
+    // give depth a real reading so the off-centre detections below have
+    // everything they need to fire a directional tacton if the _wozOpen gate
+    // were missing.
+    depthMock.depthMeters = 1.0;
+
+    // Real off-centre detections keep arriving under the pushed route.
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(fakeVibration.calls, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }
