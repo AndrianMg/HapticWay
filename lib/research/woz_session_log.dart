@@ -40,6 +40,7 @@ class WozSessionLog {
     required String label,
     required double distanceMeters,
     required double amplitude,
+    required String direction,
   }) {
     _log({
       'event': 'sim',
@@ -47,6 +48,7 @@ class WozSessionLog {
       'label': label,
       'distance_m': distanceMeters,
       'amplitude': amplitude,
+      'direction': direction,
     });
   }
 

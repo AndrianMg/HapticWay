@@ -23,7 +23,8 @@ class WozScreen extends StatefulWidget {
 }
 
 class _WozScreenState extends State<WozScreen> {
-  // The 7 trained navigation classes (ml/hapticway_labels.txt order).
+  // The 6 trained navigation classes (ml/hapticway_labels.txt order), plus
+  // 'pole' as an extra WoZ injection option.
   static const List<String> _labels = [
     'person', 'bicycle', 'bench', 'chair', 'door', 'staircase', 'pole',
   ];
@@ -37,6 +38,7 @@ class _WozScreenState extends State<WozScreen> {
   final _log = WozSessionLog();
   double _hapticK = kHapticConstantK;
   double _distance = 1.0;
+  ObstacleDirection _direction = ObstacleDirection.ahead;
   String _lastEvent = '—';
   Timer? _clock;
   Duration _elapsed = Duration.zero;
@@ -75,12 +77,17 @@ class _WozScreenState extends State<WozScreen> {
 
   void _inject(String label) {
     final amplitude = IntensityCurve.amplitudeFor(_distance, k: _hapticK);
-    Tacton.obstacleAhead(amplitude);
-    StatusAnnouncer.announce('$label ahead');
-    _log.logSim(label: label, distanceMeters: _distance, amplitude: amplitude);
-    setState(() =>
-        _lastEvent = 'SIM  $label @ ${_distance.toStringAsFixed(1)} m  '
-            '(A=${amplitude.toStringAsFixed(2)})');
+    Tacton.obstacle(_direction, amplitude);
+    StatusAnnouncer.announce(_direction.announcement(label));
+    _log.logSim(
+      label: label,
+      distanceMeters: _distance,
+      amplitude: amplitude,
+      direction: _direction.name,
+    );
+    setState(() => _lastEvent =
+        'SIM  $label ${_direction.name.toUpperCase()} @ '
+        '${_distance.toStringAsFixed(1)} m  (A=${amplitude.toStringAsFixed(2)})');
   }
 
   void _markAction(String action) {
@@ -119,6 +126,10 @@ class _WozScreenState extends State<WozScreen> {
             _heading('DISTANCE'),
             const SizedBox(height: 8),
             _buildDistanceChips(),
+            const SizedBox(height: 20),
+            _heading('DIRECTION'),
+            const SizedBox(height: 8),
+            _buildDirectionChips(),
             const SizedBox(height: 20),
             _heading('INJECT DETECTION  (fires haptic + TTS)'),
             const SizedBox(height: 8),
@@ -214,6 +225,26 @@ class _WozScreenState extends State<WozScreen> {
           label: Text('${d.toStringAsFixed(1)} m'),
           selected: selected,
           onSelected: (_) => setState(() => _distance = d),
+          selectedColor: const Color(0xFF4CAF50),
+          backgroundColor: const Color(0xFF0D1B2A),
+          labelStyle: TextStyle(
+            color: selected ? const Color(0xFF1A1A2E) : const Color(0xFFE0E0E0),
+            fontWeight: FontWeight.w600,
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildDirectionChips() {
+    return Wrap(
+      spacing: 8,
+      children: ObstacleDirection.values.map((dir) {
+        final selected = dir == _direction;
+        return ChoiceChip(
+          label: Text(dir.name.toUpperCase()),
+          selected: selected,
+          onSelected: (_) => setState(() => _direction = dir),
           selectedColor: const Color(0xFF4CAF50),
           backgroundColor: const Color(0xFF0D1B2A),
           labelStyle: TextStyle(
