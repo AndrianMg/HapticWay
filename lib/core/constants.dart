@@ -17,3 +17,8 @@ const int kDetectionStabilityFrames = 4;
 // the same thing in both systems.
 const double kDirectionLeftBound = 0.35;
 const double kDirectionRightBound = 0.65;
+
+// Once in a direction band, the centre-x must cross the boundary by this
+// margin before the direction changes — bbox jitter at a boundary must not
+// flip announcements or patterns frame-to-frame.
+const double kDirectionHysteresis = 0.03;

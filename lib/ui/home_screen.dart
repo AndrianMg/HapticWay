@@ -58,6 +58,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── Stability filter ───────────────────────────────────────────────────────
   String? _stableLabel;
   int _stableCount = 0;
+  ObstacleDirection? _lastDirection;
 
   // ── Detection display smoothing ────────────────────────────────────────────
   // Prevents concurrent depth queries and smooths jittery confidence/distance.
@@ -229,6 +230,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (detections.isEmpty) {
       _stableLabel = null;
       _stableCount = 0;
+      _lastDirection = null;
       setState(() => _statusText = 'Scanning…');
       return;
     }
@@ -242,6 +244,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _stableCount  = 1;
       _smoothConf   = 0.0;
       _smoothDepth  = 0.0;
+      _lastDirection = null;
     }
     if (_stableCount < kDetectionStabilityFrames) return;
 
@@ -269,8 +272,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             : depthM;
       }
 
-      final direction =
-          directionForCenterX((d.bbox.left + d.bbox.right) / 2);
+      final direction = directionWithHysteresis(
+          (d.bbox.left + d.bbox.right) / 2, _lastDirection);
+      _lastDirection = direction;
 
       if (!mounted) return;
       setState(() {

@@ -5,6 +5,7 @@ import 'package:hapticway/core/constants.dart';
 import 'package:hapticway/haptics/haptic_engine.dart';
 import 'package:hapticway/inference/detection.dart';
 import 'package:hapticway/ui/home_screen.dart';
+import 'package:hapticway/ui/widgets/status_announcer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration_platform_interface/vibration_platform_interface.dart';
 
@@ -34,6 +35,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     HapticEngine.reset(); // static throttle window must not bleed across tests
+    StatusAnnouncer.reset(); // static last-announced label must not bleed across tests
     depthMock = ArDepthChannelMock()..install();
     fakeDetectionSource = FakeDetectionSource();
     fakeVibration = FakeVibrationPlatform();
@@ -321,6 +323,35 @@ void main() {
     await tester.pump(); // let _applyDetection's depth-channel await resolve
 
     expect(fakeVibration.calls, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('boundary jitter within the hysteresis margin cannot flip the direction announcement', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    // Establish a stable left detection (centre-x 0.30).
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.20, 0.40)]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+    expect(StatusAnnouncer.lastAnnounced, 'door on your left');
+
+    // Jitter across the 0.35 boundary but inside the hysteresis margin
+    // (0.34 and 0.36) — without hysteresis, the 0.36 frame reclassifies as
+    // 'ahead' and announces 'door ahead'.
+    for (var i = 0; i < 4; i++) {
+      final centerX = i.isEven ? 0.34 : 0.36;
+      fakeDetectionSource.addDetections(
+          [_offCentreDetection(centerX - 0.10, centerX + 0.10)]);
+      await tester.pump();
+    }
+    await tester.pump();
+
+    expect(StatusAnnouncer.lastAnnounced, 'door on your left');
 
     await tester.pumpWidget(const SizedBox());
   });

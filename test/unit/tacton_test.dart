@@ -199,4 +199,34 @@ void main() {
       expect(fake.calls, hasLength(3));
     });
   });
+
+  group('directionWithHysteresis', () {
+    test('a null previous classifies plainly (no stickiness)', () {
+      expect(directionWithHysteresis(0.20, null), ObstacleDirection.left);
+      expect(directionWithHysteresis(0.50, null), ObstacleDirection.ahead);
+      expect(directionWithHysteresis(0.80, null), ObstacleDirection.right);
+    });
+
+    test('stays with previous while inside the hysteresis margin', () {
+      expect(directionWithHysteresis(0.34, ObstacleDirection.ahead),
+          ObstacleDirection.ahead);
+      expect(directionWithHysteresis(0.36, ObstacleDirection.left),
+          ObstacleDirection.left);
+      expect(directionWithHysteresis(0.66, ObstacleDirection.ahead),
+          ObstacleDirection.ahead);
+      expect(directionWithHysteresis(0.64, ObstacleDirection.right),
+          ObstacleDirection.right);
+    });
+
+    test('switches once the crossing is decisive (beyond the margin)', () {
+      expect(directionWithHysteresis(0.30, ObstacleDirection.ahead),
+          ObstacleDirection.left);
+      expect(directionWithHysteresis(0.40, ObstacleDirection.left),
+          ObstacleDirection.ahead);
+      expect(directionWithHysteresis(0.70, ObstacleDirection.ahead),
+          ObstacleDirection.right);
+      expect(directionWithHysteresis(0.60, ObstacleDirection.right),
+          ObstacleDirection.ahead);
+    });
+  });
 }

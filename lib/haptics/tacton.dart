@@ -23,6 +23,31 @@ ObstacleDirection directionForCenterX(double centerX) {
   return ObstacleDirection.ahead;
 }
 
+/// [directionForCenterX] with hysteresis: keeps [previous] until the
+/// centre-x has crossed the band boundary by [kDirectionHysteresis].
+/// A null [previous] (no tracked object) classifies plainly.
+ObstacleDirection directionWithHysteresis(
+    double centerX, ObstacleDirection? previous) {
+  switch (previous) {
+    case ObstacleDirection.left:
+      if (centerX < kDirectionLeftBound + kDirectionHysteresis) {
+        return ObstacleDirection.left;
+      }
+    case ObstacleDirection.right:
+      if (centerX > kDirectionRightBound - kDirectionHysteresis) {
+        return ObstacleDirection.right;
+      }
+    case ObstacleDirection.ahead:
+      if (centerX >= kDirectionLeftBound - kDirectionHysteresis &&
+          centerX <= kDirectionRightBound + kDirectionHysteresis) {
+        return ObstacleDirection.ahead;
+      }
+    case null:
+      break;
+  }
+  return directionForCenterX(centerX);
+}
+
 /// Named vibration patterns for the Haptic Radar.
 ///
 /// Every pattern routes through [HapticEngine] so platform failures are
