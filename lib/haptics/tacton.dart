@@ -3,10 +3,11 @@ import 'haptic_engine.dart';
 /// Named vibration patterns for the Haptic Radar.
 ///
 /// Every pattern routes through [HapticEngine] so platform failures are
-/// caught and surfaced instead of dying silently. Only [obstacleAhead] is
-/// rate-limited; directional patterns and override confirmations use the
-/// engine's un-throttled entry points (multi-pulse timing must not be
-/// disrupted, and confirmations are one-shot user-initiated events).
+/// caught and surfaced instead of dying silently. [obstacleAhead] is
+/// rate-limited per pulse; directional patterns share the longer
+/// [HapticEngine.kPatternCooldown] window (intra-pattern timing is never
+/// disrupted); override confirmations are un-throttled one-shot
+/// user-initiated events.
 abstract final class Tacton {
   /// Single 200 ms pulse — main proximity alert, scaled by distance.
   static Future<void> obstacleAhead(double amplitude) =>

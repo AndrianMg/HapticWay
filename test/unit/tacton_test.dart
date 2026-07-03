@@ -138,9 +138,36 @@ void main() {
       fake.vibrateError = PlatformException(code: 'VIBRATE_FAIL');
       await Tacton.obstacleLeft(0.6);
       await Tacton.manualOverrideOn();
+      advance(const Duration(milliseconds: 1600)); // clear the pattern cooldown
       await Tacton.obstacleRight(0.6);
       expect(HapticEngine.consecutiveFailures, 3);
       expect(StatusAnnouncer.lastAnnounced, 'Haptic feedback unavailable');
+    });
+  });
+
+  group('Pattern cooldown', () {
+    test('a second pattern within 1500ms is dropped', () async {
+      await Tacton.obstacleLeft(0.6);
+      advance(const Duration(milliseconds: 500));
+      await Tacton.obstacleRight(0.6); // left and right share the window
+      expect(fake.calls, hasLength(1));
+    });
+
+    test('patterns more than 1500ms apart both fire', () async {
+      await Tacton.obstacleLeft(0.6);
+      advance(const Duration(milliseconds: 1600));
+      await Tacton.obstacleLeft(0.6);
+      expect(fake.calls, hasLength(2));
+    });
+
+    test('a no-vibrator probe does not consume the pattern window', () async {
+      fake.hasVibratorValue = false;
+      await Tacton.obstacleLeft(0.6);
+      expect(fake.calls, isEmpty);
+
+      fake.hasVibratorValue = true;
+      await Tacton.obstacleLeft(0.6);
+      expect(fake.calls, hasLength(1));
     });
   });
 }

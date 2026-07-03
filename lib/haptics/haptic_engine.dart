@@ -16,6 +16,10 @@ class HapticEngine {
   /// Consecutive failures before 'Haptic feedback unavailable' is announced.
   static const int kFailureThreshold = 3;
 
+  /// Minimum gap between multi-pulse patterns — a stream of stable detection
+  /// frames must not queue overlapping directional patterns.
+  static const Duration kPatternCooldown = Duration(milliseconds: 1500);
+
   // Monotonic clock — a wall-clock (DateTime.now) throttle silently drops
   // pulses when NTP/DST adjusts the clock backwards.
   static final Stopwatch _clock = Stopwatch()..start();
@@ -25,6 +29,7 @@ class HapticEngine {
   static Duration Function() elapsed = () => _clock.elapsed;
 
   static Duration? _lastPulse;
+  static Duration? _lastPattern;
   static int _consecutiveFailures = 0;
 
   @visibleForTesting
@@ -56,14 +61,22 @@ class HapticEngine {
     }
   }
 
-  /// Un-throttled multi-pulse pattern — directional tactons whose timing the
-  /// per-call rate limiter would corrupt.
+  /// Multi-pulse pattern — directional tactons. Not subject to the per-pulse
+  /// rate limiter (which would corrupt intra-pattern timing) but guarded by
+  /// [kPatternCooldown] so repeated stable detections can't queue
+  /// overlapping patterns.
   static Future<void> vibratePattern({
     required List<int> pattern,
     required List<int> intensities,
   }) async {
+    final now = elapsed();
+    if (_lastPattern != null && now - _lastPattern! < kPatternCooldown) {
+      return;
+    }
     try {
+      // Before consuming the window — mirrors vibrate()'s no-vibrator rule.
       if (!await Vibration.hasVibrator()) return;
+      _lastPattern = now;
       await Vibration.vibrate(pattern: pattern, intensities: intensities);
       _consecutiveFailures = 0;
     } catch (e) {
@@ -101,6 +114,7 @@ class HapticEngine {
   @visibleForTesting
   static void reset() {
     _lastPulse = null;
+    _lastPattern = null;
     _consecutiveFailures = 0;
     elapsed = () => _clock.elapsed;
   }
