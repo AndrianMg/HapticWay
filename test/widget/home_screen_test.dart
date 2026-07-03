@@ -19,6 +19,13 @@ Detection _personDetection() => Detection(
       timestamp: DateTime.now(),
     );
 
+Detection _offCentreDetection(double left, double right) => Detection(
+      label: 'door',
+      confidence: 0.9,
+      bbox: Rect.fromLTRB(left, 0.4, right, 0.6),
+      timestamp: DateTime.now(),
+    );
+
 void main() {
   late ArDepthChannelMock depthMock;
   late FakeDetectionSource fakeDetectionSource;
@@ -200,6 +207,78 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool(kPrefKeyOverride), isTrue);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // ── Directional tactons (off-centre detections) ───────────────────────────
+
+  testWidgets('a left-third stable detection fires the two-pulse tacton', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]); // centre-x 0.15
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(fakeVibration.calls, hasLength(1));
+    expect(fakeVibration.calls.single.pattern, [0, 80, 80, 80]); // 2 pulses = left
+    expect(find.textContaining('left'), findsOneWidget); // status shows direction
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a right-third stable detection fires the three-pulse tacton', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.75, 0.95)]); // centre-x 0.85
+      await tester.pump();
+    }
+    await tester.pump();
+
+    expect(fakeVibration.calls, hasLength(1));
+    expect(fakeVibration.calls.single.pattern, [0, 60, 60, 60, 60, 60]); // 3 = right
+    expect(find.textContaining('right'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a centre detection fires no directional pattern', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]); // centre-x 0.5
+      await tester.pump();
+    }
+    await tester.pump();
+
+    expect(fakeVibration.calls.where((c) => c.pattern.isNotEmpty), isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('override on suppresses the directional tacton but keeps the info', (tester) async {
+    SharedPreferences.setMockInitialValues({kPrefKeyOverride: true});
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]);
+      await tester.pump();
+    }
+    await tester.pump();
+
+    expect(fakeVibration.calls, isEmpty); // no haptic of any kind
+    expect(find.textContaining('left'), findsOneWidget); // status/TTS still inform
 
     await tester.pumpWidget(const SizedBox());
   });

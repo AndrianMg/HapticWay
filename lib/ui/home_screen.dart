@@ -251,8 +251,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _applyDetection(closest);
   }
 
-  // Updates status text with the detected object label and its bbox depth.
-  // Haptic intensity is driven by _pollDepth, not here.
+  // Updates status text with the detected object's label, bbox depth and
+  // direction, and fires the directional tacton when the object sits outside
+  // the depth-poll radar's centre window. Centre objects stay with _pollDepth
+  // so nothing double-fires.
   Future<void> _applyDetection(Detection d) async {
     _applyBusy = true;
     try {
@@ -267,13 +269,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             : depthM;
       }
 
+      final direction =
+          directionForCenterX((d.bbox.left + d.bbox.right) / 2);
+
       if (!mounted) return;
       setState(() {
         _statusText = '${d.label} detected (${(_smoothConf * 100).round()}%)'
-            '${_smoothDepth > 0 ? ' — ${_smoothDepth.toStringAsFixed(1)} m' : ''}';
+            '${_smoothDepth > 0 ? ' — ${_smoothDepth.toStringAsFixed(1)} m' : ''}'
+            '${direction == ObstacleDirection.ahead ? '' : ' — ${direction.name}'}';
       });
 
-      StatusAnnouncer.announce('${d.label} ahead');
+      StatusAnnouncer.announce(direction.announcement(d.label));
+
+      if (direction != ObstacleDirection.ahead &&
+          !_hapticOverride &&
+          depthM > 0 &&
+          depthM < kMaxDistanceMeters) {
+        unawaited(Tacton.obstacle(
+            direction, IntensityCurve.amplitudeFor(depthM, k: _hapticK)));
+      }
     } finally {
       _applyBusy = false;
     }
