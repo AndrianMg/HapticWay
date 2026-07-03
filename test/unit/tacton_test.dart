@@ -170,4 +170,33 @@ void main() {
       expect(fake.calls, hasLength(1));
     });
   });
+
+  group('ObstacleDirection', () {
+    test('directionForCenterX splits at the 0.35/0.65 radar-window bounds', () {
+      expect(directionForCenterX(0.20), ObstacleDirection.left);
+      expect(directionForCenterX(0.35), ObstacleDirection.ahead); // boundary is ahead
+      expect(directionForCenterX(0.50), ObstacleDirection.ahead);
+      expect(directionForCenterX(0.65), ObstacleDirection.ahead); // boundary is ahead
+      expect(directionForCenterX(0.80), ObstacleDirection.right);
+    });
+
+    test('announcement phrases say where the obstacle is', () {
+      expect(ObstacleDirection.left.announcement('door'), 'door on your left');
+      expect(ObstacleDirection.ahead.announcement('door'), 'door ahead');
+      expect(ObstacleDirection.right.announcement('door'), 'door on your right');
+    });
+
+    test('Tacton.obstacle dispatches to the matching pattern', () async {
+      await Tacton.obstacle(ObstacleDirection.left, 0.6);
+      expect(fake.calls.single.pattern, [0, 80, 80, 80]);
+
+      advance(const Duration(milliseconds: 1600)); // clear pattern cooldown
+      await Tacton.obstacle(ObstacleDirection.right, 0.6);
+      expect(fake.calls.last.pattern, [0, 60, 60, 60, 60, 60]);
+
+      await Tacton.obstacle(ObstacleDirection.ahead, 0.6);
+      expect(fake.calls.last.duration, 200); // single throttled pulse
+      expect(fake.calls, hasLength(3));
+    });
+  });
 }
