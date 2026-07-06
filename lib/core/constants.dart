@@ -4,6 +4,13 @@ const double kHapticConstantK = 0.5;
 const double kMinDistanceMeters = 0.3;
 const double kMaxDistanceMeters = 4.0;
 
+// Directional tactons carry their information in pulse count (2 = left,
+// 3 = right); below this amplitude the pulses cannot be counted against the
+// radar's background pulses, so the live pipeline floors them here. Distance
+// is still conveyed by the ahead-radar and the spoken announcement. WoZ
+// injections bypass the floor — researcher-chosen amplitudes arrive verbatim.
+const double kDirectionalAmplitudeFloor = 0.6;
+
 const String kPrefKeyHapticK = 'haptic_k';
 const String kPrefKeyOverride = 'haptic_override';
 const String kPrefKeyOnboardingComplete = 'onboarding_complete';

@@ -267,6 +267,47 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('a far off-centre detection fires its pattern at the legibility floor', (tester) async {
+    depthMock.depthMeters = 3.0; // plain curve gives 0.056 — uncountable pulses
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(fakeVibration.calls, hasLength(1));
+    expect(fakeVibration.calls.single.pattern, [0, 80, 80, 80]);
+    expect(fakeVibration.calls.single.intensities,
+        [0, 153, 0, 153]); // kDirectionalAmplitudeFloor 0.6 * 255
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('radar ticks inside the quiet window cannot stomp on a directional pattern', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]);
+      await tester.pump();
+    }
+    await tester.pump(); // directional pattern fires
+    expect(fakeVibration.calls, hasLength(1));
+
+    // Two radar ticks land within the pattern's quiet window (HapticEngine
+    // runs on the real stopwatch, so pumped time is near-instant for it):
+    // both must be dropped — Android vibrate() would cancel the playing
+    // pattern and the count would become unreadable.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(fakeVibration.calls, hasLength(1));
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('override on suppresses the directional tacton but keeps the info', (tester) async {
     SharedPreferences.setMockInitialValues({kPrefKeyOverride: true});
     depthMock.depthMeters = 1.0;

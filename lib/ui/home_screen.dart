@@ -301,8 +301,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           !_settingsOpen &&
           depthM > 0 &&
           depthM < kMaxDistanceMeters) {
-        unawaited(Tacton.obstacle(
-            direction, IntensityCurve.amplitudeFor(depthM, k: _hapticK)));
+        unawaited(Tacton.obstacle(direction,
+            IntensityCurve.directionalAmplitudeFor(depthM, k: _hapticK)));
       }
     } finally {
       _applyBusy = false;

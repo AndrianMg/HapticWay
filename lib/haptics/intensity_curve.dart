@@ -1,5 +1,7 @@
 import 'dart:math' as math;
 
+import '../core/constants.dart';
+
 abstract final class IntensityCurve {
   /// Inverse-square haptic amplitude: A(d) = min(1.0, k / d²)
   ///
@@ -10,4 +12,13 @@ abstract final class IntensityCurve {
     if (distanceMeters <= 0) return 1.0;
     return math.min(1.0, k / (distanceMeters * distanceMeters));
   }
+
+  /// [amplitudeFor] with a legibility floor for the live directional
+  /// tactons: their information is the pulse count, and pulses below
+  /// [kDirectionalAmplitudeFloor] cannot be counted at all — a far door on
+  /// the right would buzz identically to the radar's faint ahead-pulses.
+  static double directionalAmplitudeFor(double distanceMeters,
+          {required double k}) =>
+      math.max(
+          kDirectionalAmplitudeFloor, amplitudeFor(distanceMeters, k: k));
 }

@@ -20,6 +20,13 @@ class HapticEngine {
   /// frames must not queue overlapping directional patterns.
   static const Duration kPatternCooldown = Duration(milliseconds: 1500);
 
+  /// Single pulses are dropped for this long after a pattern starts —
+  /// Android's vibrate() cancels the ongoing effect, so a radar pulse
+  /// landing mid-pattern physically truncates the 2/3-pulse rhythm, and one
+  /// landing right after it masks the count. Covers the longest pattern
+  /// (300 ms) plus a perceptual gap.
+  static const Duration kPatternQuietWindow = Duration(milliseconds: 800);
+
   // Monotonic clock — a wall-clock (DateTime.now) throttle silently drops
   // pulses when NTP/DST adjusts the clock backwards.
   static final Stopwatch _clock = Stopwatch()..start();
@@ -36,8 +43,14 @@ class HapticEngine {
   static int get consecutiveFailures => _consecutiveFailures;
 
   /// Rate-limited single pulse — the inference/depth-driven proximity alert.
+  /// Yields to a playing directional pattern (see [kPatternQuietWindow]).
   static Future<void> vibrate(double amplitude, Duration duration) async {
     final now = elapsed();
+    // A pattern owns the actuator for the quiet window: a pulse here would
+    // replace the playing pattern and make its count unreadable.
+    if (_lastPattern != null && now - _lastPattern! < kPatternQuietWindow) {
+      return;
+    }
     if (_lastPulse != null &&
         (now - _lastPulse!).inMilliseconds < 1000 ~/ _maxPulsesPerSecond) {
       return;

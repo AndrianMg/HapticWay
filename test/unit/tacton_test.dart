@@ -171,6 +171,33 @@ void main() {
     });
   });
 
+  group('Pattern quiet window', () {
+    test('a single pulse within the quiet window of a pattern is dropped', () async {
+      await Tacton.obstacleLeft(0.6);
+      advance(const Duration(milliseconds: 500));
+      // A radar tick just after the pattern: Android vibrate() would cancel
+      // the playing pattern and blur its pulse count — it must be dropped.
+      await Tacton.obstacleAhead(0.6);
+      expect(fake.calls, hasLength(1)); // the pattern only
+    });
+
+    test('a single pulse after the quiet window fires normally', () async {
+      await Tacton.obstacleLeft(0.6);
+      advance(const Duration(milliseconds: 900));
+      await Tacton.obstacleAhead(0.6);
+      expect(fake.calls, hasLength(2));
+    });
+
+    test('a dropped pulse does not consume the pulse throttle window', () async {
+      await Tacton.obstacleLeft(0.6);
+      advance(const Duration(milliseconds: 500));
+      await Tacton.obstacleAhead(0.6); // dropped by the quiet window
+      advance(const Duration(milliseconds: 400)); // 900ms after the pattern
+      await Tacton.obstacleAhead(0.6); // must not be throttled by the drop
+      expect(fake.calls, hasLength(2));
+    });
+  });
+
   group('ObstacleDirection', () {
     test('directionForCenterX splits at the 0.35/0.65 radar-window bounds', () {
       expect(directionForCenterX(0.20), ObstacleDirection.left);
@@ -194,6 +221,7 @@ void main() {
       await Tacton.obstacle(ObstacleDirection.right, 0.6);
       expect(fake.calls.last.pattern, [0, 60, 60, 60, 60, 60]);
 
+      advance(const Duration(milliseconds: 900)); // clear the quiet window
       await Tacton.obstacle(ObstacleDirection.ahead, 0.6);
       expect(fake.calls.last.duration, 200); // single throttled pulse
       expect(fake.calls, hasLength(3));

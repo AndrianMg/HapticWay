@@ -58,4 +58,23 @@ void main() {
       );
     });
   });
+
+  group('IntensityCurve.directionalAmplitudeFor', () {
+    test('far obstacles are floored for pulse-count legibility', () {
+      // Plain curve at 3m with the default k is 0.056 — pulses that weak
+      // cannot be counted, and the count IS the direction information.
+      expect(
+        IntensityCurve.directionalAmplitudeFor(3.0, k: kHapticConstantK),
+        kDirectionalAmplitudeFloor,
+      );
+    });
+
+    test('close obstacles follow the plain curve above the floor', () {
+      // k=0.5 at 0.8m -> 0.78, already legible: identical to amplitudeFor.
+      expect(
+        IntensityCurve.directionalAmplitudeFor(0.8, k: kHapticConstantK),
+        closeTo(IntensityCurve.amplitudeFor(0.8, k: kHapticConstantK), 1e-9),
+      );
+    });
+  });
 }
