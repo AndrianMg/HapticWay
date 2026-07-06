@@ -60,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _stableLabel;
   int _stableCount = 0;
   ObstacleDirection? _lastDirection;
+  int _emptyFrames = 0;
 
   // ── Detection display smoothing ────────────────────────────────────────────
   // Prevents concurrent depth queries and smooths jittery confidence/distance.
@@ -229,12 +230,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (kDebugMode) setState(() => _overlayDets = detections);
 
     if (detections.isEmpty) {
+      // Loss-side twin of the stability gate below: one empty frame is bbox
+      // jitter, not a departed obstacle. Flipping instantly made the status
+      // flap detection↔Scanning at frame rate — with the card as a liveRegion
+      // that flood went straight to TalkBack (§7.4 pre-audit finding).
+      if (_stableLabel == null) return; // already scanning
+      if (++_emptyFrames < kDetectionLossFrames) return;
       _stableLabel = null;
       _stableCount = 0;
       _lastDirection = null;
-      setState(() => _statusText = 'Scanning…');
+      _emptyFrames = 0;
+      _setStatus('Scanning…');
       return;
     }
+    _emptyFrames = 0;
 
     final closest = detections.first;
 
@@ -300,9 +309,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  // Status changes speak through StatusAnnouncer's 1500 ms funnel — the card
+  // is deliberately not a liveRegion, so this is the only spoken-status path.
   void _setStatus(String text) {
     if (!mounted) return;
     setState(() => _statusText = text);
+    StatusAnnouncer.announce(text);
   }
 
   Future<void> _toggleOverride() async {
@@ -519,8 +531,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Widget _buildStatusCard() {
     return FocusTraversalOrder(
       order: const NumericFocusOrder(3),
+      // Deliberately NOT a liveRegion: this text mutates at frame rate (EMA'd
+      // confidence/depth), and a live region hands every mutation to TalkBack
+      // with no throttle — the speech queue backed up into delayed, repeated
+      // announcements. Spoken status goes through StatusAnnouncer instead;
+      // focusing the card still reads the full detail on demand.
       child: Semantics(
-        liveRegion: true,
         label: _statusText,
         child: Container(
           margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),

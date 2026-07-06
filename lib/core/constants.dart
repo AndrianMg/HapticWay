@@ -12,6 +12,12 @@ const Duration kAnnouncementThrottle = Duration(milliseconds: 1500);
 const int kMaxConsecutiveFailedFrames = 3;
 const int kDetectionStabilityFrames = 4;
 
+// A detection must be absent for this many consecutive empty frames before
+// the status returns to 'Scanning…' — the exit-side twin of
+// kDetectionStabilityFrames, so a single-frame dropout cannot flip the
+// status text (and its announcement) back and forth.
+const int kDetectionLossFrames = 4;
+
 // Direction bands for a detection's bbox centre-x — aligned with the
 // 0.35–0.65 centre window the depth-poll radar samples, so "ahead" means
 // the same thing in both systems.

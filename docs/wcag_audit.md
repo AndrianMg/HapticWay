@@ -97,7 +97,7 @@ Caveats are recorded against individual success criteria below — they are scop
 | WCAG SC | Level | Verdict | Evidence (`file:line`) |
 |---|---|---|---|
 | 4.1.2 Name, Role, Value | A | Pass | Settings icon: `button: true` at `lib/ui/home_screen.dart:91`. Override toggle: `toggled: _hapticOverride` at `:204` exposes the on/off state. Open-settings button: `button: true` at `:230`. |
-| 4.1.3 Status Messages | AA | Pass | Status card declared `liveRegion: true` at `lib/ui/home_screen.dart:127`; programmatic state changes route through `StatusAnnouncer.announce()` (`lib/ui/home_screen.dart:35-37`) which honours the 1500 ms throttle at `lib/ui/widgets/status_announcer.dart:12` to prevent TalkBack spam. |
+| 4.1.3 Status Messages | AA | Pass | All spoken status changes route through `StatusAnnouncer.announce()` (`SemanticsService.sendAnnouncement`), which honours the 1500 ms identical-string throttle at `lib/ui/widgets/status_announcer.dart:14-16` — detections via `_applyDetection`, and status transitions (Scanning/Paused/errors) via `_setStatus`. The status card is deliberately **not** a `liveRegion`: its visible text updates at frame rate (smoothed confidence/depth), and a live region hands every mutation to TalkBack unthrottled — pre-§7.4 TalkBack use found this flooded the speech queue (delayed, repeated announcements). Regression-guarded by three tests in `test/widget/home_screen_test.dart` ("TalkBack announcement flood" section). |
 
 ---
 

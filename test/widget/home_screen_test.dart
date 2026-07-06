@@ -409,4 +409,75 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  // ── TalkBack announcement flood (§7.4 pre-audit finding) ──────────────────
+  // The status card was a liveRegion bound to text that mutates at frame rate
+  // (EMA'd confidence %, depth, and an instant flip back to 'Scanning…' on any
+  // empty frame). TalkBack speaks every live-region label change with no
+  // throttle, so the speech queue backed up: delayed, repeated announcements.
+  // Spoken status must flow ONLY through StatusAnnouncer's 1500 ms funnel.
+
+  testWidgets('status card is not a live region — churning text cannot bypass the announcer', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    final node = tester.getSemantics(find.bySemanticsLabel(RegExp('Scanning')));
+    expect(node.flagsCollection.isLiveRegion, isFalse);
+
+    semantics.dispose();
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a brief detection dropout does not flip the status back to Scanning', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+    expect(find.textContaining('person detected'), findsOneWidget);
+
+    // A single empty frame is bbox jitter, not a departed obstacle.
+    fakeDetectionSource.addDetections([]);
+    await tester.pump(); // deliver the stream event
+    await tester.pump(); // rebuild with whatever the handler decided
+    expect(find.textContaining('person detected'), findsOneWidget);
+
+    // kDetectionLossFrames consecutive empties cross the loss threshold.
+    for (var i = 1; i < kDetectionLossFrames; i++) {
+      fakeDetectionSource.addDetections([]);
+      await tester.pump();
+    }
+    await tester.pump(); // deliver + rebuild after the threshold frame
+    expect(find.textContaining('person detected'), findsNothing);
+    expect(find.textContaining('Scanning'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('returning to Scanning announces once through the throttled announcer', (tester) async {
+    depthMock.depthMeters = 1.0;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]);
+      await tester.pump();
+    }
+    await tester.pump();
+    expect(StatusAnnouncer.lastAnnounced, 'person ahead');
+
+    for (var i = 0; i < kDetectionLossFrames; i++) {
+      fakeDetectionSource.addDetections([]);
+      await tester.pump();
+    }
+    await tester.pump(); // deliver the final stream event
+    expect(StatusAnnouncer.lastAnnounced, 'Scanning…');
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }
