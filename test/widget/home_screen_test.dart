@@ -327,6 +327,60 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  // ── Settings route mutes live haptics (same contract as the WoZ panel) ────
+
+  testWidgets('opening Settings pauses the depth-poll radar and resumes on return', (tester) async {
+    // depthMock.depthMeters stays at its default (-1.0) until Settings is
+    // open, so the radar cannot fire during navigation and contaminate the
+    // isEmpty assertion below.
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    await tester.tap(find.bySemanticsLabel('Open settings').first);
+    await tester.pump(); // Navigator.push starts building the Settings route
+    await tester.pump(); // SettingsScreen's _loadPrefs await resolves
+
+    // A close obstacle appears while Settings is open: the radar must stay
+    // silent — the user is configuring haptics, often mid TEST VIBRATION.
+    depthMock.depthMeters = 0.5;
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(fakeVibration.calls, isEmpty);
+
+    // Returning to home restarts the radar. (Tapped by icon: inside the
+    // Settings ListView the back button's semantics merge with the title
+    // into one node, so a label finder cannot target the button itself.)
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pump(); // pop completes the route future
+    await tester.pump(); // .then callback restarts the poll timer
+    await tester.pump(const Duration(milliseconds: 300)); // next radar tick
+    expect(fakeVibration.calls, hasLength(1));
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Settings open mutes real directional tactons', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    await tester.tap(find.bySemanticsLabel('Open settings').first);
+    await tester.pump();
+    await tester.pump();
+
+    // Off-centre detections keep arriving under the pushed route; without a
+    // settings gate on _applyDetection they would fire the directional tacton.
+    depthMock.depthMeters = 1.0;
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_offCentreDetection(0.05, 0.25)]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(fakeVibration.calls, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('boundary jitter within the hysteresis margin cannot flip the direction announcement', (tester) async {
     depthMock.depthMeters = 1.0;
     await tester.pumpWidget(buildApp());

@@ -39,6 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _pipelineRunning = false;
   bool _resumeAfterPause = false;
   bool _wozOpen = false;
+  bool _settingsOpen = false;
   int _depthFailures = 0;
   Future<void>? _pendingStop;
 
@@ -155,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _startDepthPoll() {
-    if (_wozOpen) return;
+    if (_wozOpen || _settingsOpen) return;
     _depthPollTimer?.cancel();
     _depthPollTimer = Timer.periodic(
       const Duration(milliseconds: 300),
@@ -288,6 +289,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (direction != ObstacleDirection.ahead &&
           !_hapticOverride &&
           !_wozOpen &&
+          !_settingsOpen &&
           depthM > 0 &&
           depthM < kMaxDistanceMeters) {
         unawaited(Tacton.obstacle(
@@ -355,10 +357,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _openSettings(BuildContext context) {
+    // Same contract as the WoZ panel: live haptics must stay silent under the
+    // Settings route — the user is adjusting intensity there, often mid
+    // TEST VIBRATION. _settingsOpen also stops a pause/resume cycle from
+    // restarting the timer while Settings is still open.
+    _settingsOpen = true;
+    _depthPollTimer?.cancel();
+    _depthPollTimer = null;
     Navigator.push<String>(
       context,
       MaterialPageRoute<String>(builder: (_) => const SettingsScreen()),
     ).then((benchmarkCondition) {
+      _settingsOpen = false;
+      if (mounted) _startDepthPoll();
       _loadPrefs();
       if (benchmarkCondition != null) {
         _benchmark.start(
