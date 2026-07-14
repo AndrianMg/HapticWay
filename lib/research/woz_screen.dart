@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/constants.dart';
 import '../haptics/intensity_curve.dart';
 import '../haptics/tacton.dart';
 import '../ui/widgets/status_announcer.dart';
+import 'session_export.dart';
 import 'woz_session_log.dart';
 
 /// Hidden Wizard-of-Oz researcher panel (§6.4).
@@ -32,10 +35,13 @@ class _WozScreenState extends State<WozScreen> {
   static const List<double> _distances = [0.5, 1.0, 1.5, 2.0, 3.0];
 
   static const List<String> _actions = [
-    'stopped', 'turned', 'hesitated', 'near_miss', 'no_reaction',
+    'stopped', 'turned', 'hesitated', 'near_miss', 'false_positive',
+    'no_reaction',
   ];
 
-  final _log = WozSessionLog();
+  // App-wide session — survives leaving the panel (see WozSessionLog.instance).
+  WozSessionLog get _log => WozSessionLog.instance;
+  final _participantId = TextEditingController();
   double _hapticK = kHapticConstantK;
   double _distance = 1.0;
   ObstacleDirection _direction = ObstacleDirection.ahead;
@@ -47,6 +53,13 @@ class _WozScreenState extends State<WozScreen> {
   void initState() {
     super.initState();
     _loadK();
+    if (_log.isOpen) {
+      // Re-attaching to a session that survived leaving the panel: mark the
+      // segment boundary and resume the elapsed clock.
+      _log.logPhase('woz');
+      _elapsed = DateTime.now().difference(_log.sessionStart!);
+      _startClock();
+    }
   }
 
   Future<void> _loadK() async {
@@ -63,16 +76,71 @@ class _WozScreenState extends State<WozScreen> {
       if (!mounted) return;
       setState(() => _lastEvent = 'Session saved: $path');
     } else {
-      await _log.open(k: _hapticK);
+      final id = await _promptParticipantId();
+      if (id == null || !mounted) return; // cancelled — no session
+      await _log.open(k: _hapticK, participantId: id);
       _elapsed = Duration.zero;
-      _clock = Timer.periodic(const Duration(seconds: 1), (_) {
-        if (mounted) {
-          setState(() => _elapsed = DateTime.now().difference(_log.sessionStart!));
-        }
-      });
+      _startClock();
       if (!mounted) return;
       setState(() => _lastEvent = 'Session started');
     }
+  }
+
+  void _startClock() {
+    _clock = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        setState(() => _elapsed = DateTime.now().difference(_log.sessionStart!));
+      }
+    });
+  }
+
+  /// Asks for the anonymous participant code (consent form: "e.g. P3").
+  /// Deliberately silent — TTS here would cue the blindfolded participant.
+  Future<String?> _promptParticipantId() {
+    _participantId.clear();
+    return showDialog<String>(
+      context: context,
+      // A stray multi-touch must not dismiss the dialog mid-setup.
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title:
+            const Text('Participant ID', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: _participantId,
+          autofocus: true,
+          inputFormatters: [
+            FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9_-]')),
+          ],
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'Anonymous participant ID',
+            labelStyle: TextStyle(color: Color(0xFFB0BEC5)),
+            hintText: 'e.g. P3',
+            hintStyle: TextStyle(color: Color(0xFF555566)),
+          ),
+          onSubmitted: (value) => Navigator.pop(context, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              foregroundColor: const Color(0xFFB0BEC5),
+            ),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, _participantId.text),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              foregroundColor: const Color(0xFF4CAF50),
+            ),
+            child: const Text('BEGIN'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _inject(String label) {
@@ -95,12 +163,68 @@ class _WozScreenState extends State<WozScreen> {
     setState(() => _lastEvent = 'ACTION  $action');
   }
 
+  Future<void> _exportSession() async {
+    final path = _log.filePath ?? await WozSessionLog.latestFilePath();
+    if (!mounted) return;
+    if (path == null) {
+      setState(() => _lastEvent = 'No session log to export');
+      return;
+    }
+    final result = await SessionExport.share(path);
+    if (!mounted) return;
+    // A dismissed share sheet must never lead to wiping the only copy.
+    if (result.status != ShareResultStatus.success) return;
+    await _confirmDelete(path);
+  }
+
+  Future<void> _confirmDelete(String path) async {
+    final delete = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        title: const Text('Log shared', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Delete it from this device? (DPIA: logs are wiped after each pull.)',
+          style: TextStyle(color: Color(0xFFB0BEC5)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              foregroundColor: const Color(0xFFB0BEC5),
+            ),
+            child: const Text('KEEP'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(48, 48),
+              foregroundColor: const Color(0xFFD32F2F),
+            ),
+            child: const Text('DELETE'),
+          ),
+        ],
+      ),
+    );
+    if (delete != true || !mounted) return;
+    try {
+      await File(path).delete();
+      if (mounted) setState(() => _lastEvent = 'Log deleted');
+    } catch (e) {
+      if (mounted) setState(() => _lastEvent = 'Delete failed: $e');
+    }
+  }
+
   @override
   void dispose() {
     _clock?.cancel();
-    // Close any session left open so the file isn't truncated mid-write.
-    // close() is claim-then-close, so racing _toggleSession is safe.
-    unawaited(_log.close());
+    // The session deliberately survives leaving the panel so live-segment
+    // events (override toggles, manual pulses — §7.2) land in the same log.
+    // Only END closes it (plus HomeScreen's teardown backstop); here we just
+    // mark the segment boundary.
+    if (_log.isOpen) _log.logPhase('live');
+    _participantId.dispose();
     super.dispose();
   }
 
@@ -176,6 +300,14 @@ class _WozScreenState extends State<WozScreen> {
               ),
             ),
           ),
+        IconButton(
+          // Export only between sessions — the file is complete then.
+          onPressed: active ? null : _exportSession,
+          icon: const Icon(Icons.ios_share),
+          color: Colors.white,
+          disabledColor: const Color(0xFF555566),
+          tooltip: 'Export session log',
+        ),
         ElevatedButton(
           onPressed: _toggleSession,
           style: ElevatedButton.styleFrom(
