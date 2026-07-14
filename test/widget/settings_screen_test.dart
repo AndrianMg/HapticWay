@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hapticway/core/constants.dart';
+import 'package:hapticway/research/woz_session_log.dart';
 import 'package:hapticway/ui/settings_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration_platform_interface/vibration_platform_interface.dart';
 
 import '../support/fake_vibration_platform.dart';
+import '../support/fake_woz_session_log.dart';
 
 // Finds the Semantics widget wrapping the sensitivity slider so tests can
 // invoke its onIncrease/onDecrease callbacks directly — this exercises the
@@ -96,12 +98,14 @@ void main() {
     });
   });
 
-  testWidgets('override toggle persists kPrefKeyOverride', (tester) async {
+  testWidgets('alerts toggle persists kPrefKeyOverride (inverted)', (tester) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(buildApp());
     await tester.pumpAndSettle();
 
-    await tester.tap(find.bySemanticsLabel(RegExp('^Haptic override')));
+    // Alerts default to on; one tap turns them off, which the pref stores
+    // with the historic override polarity (true = alerts off).
+    await tester.tap(find.bySemanticsLabel(RegExp('^Vibration alerts')));
     await tester.pumpAndSettle();
 
     final prefs = await SharedPreferences.getInstance();
@@ -143,6 +147,29 @@ void main() {
       expect(fakeVibration.calls, hasLength(1));
       expect(fakeVibration.calls.single.duration, 200);
       expect(fakeVibration.calls.single.amplitude, 204); // (0.8 * 255).round()
+    });
+
+    testWidgets('manual pulse lands in an active WoZ session log (§7.2)', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final fakeLog = FakeWozSessionLog()..seedOpen();
+      WozSessionLog.instance = fakeLog;
+      addTearDown(WozSessionLog.reset);
+
+      await tester.pumpWidget(buildApp());
+      await tester.pumpAndSettle();
+      await tester.runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+
+      final maxPulse = find.bySemanticsLabel(RegExp('^Max pulse'));
+      await tester.dragUntilVisible(
+        maxPulse, find.byType(Scrollable).first, const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(maxPulse);
+      await tester.pumpAndSettle();
+
+      expect(fakeVibration.calls, hasLength(1)); // still vibrates
+      expect(fakeLog.events.single,
+          {'event': 'manual_pulse', 'amplitude': 1.0, 'duration_ms': 200});
     });
   });
 

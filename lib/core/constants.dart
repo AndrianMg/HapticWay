@@ -15,6 +15,12 @@ const String kPrefKeyHapticK = 'haptic_k';
 const String kPrefKeyOverride = 'haptic_override';
 const String kPrefKeyOnboardingComplete = 'onboarding_complete';
 
+// §6.2 depth-poll radar cadence: fast while a surface sits inside haptic
+// range (kMaxDistanceMeters), slow once everything is out of range — an idle
+// scene shouldn't pay the close-range polling rate in battery.
+const Duration kDepthPollNearInterval = Duration(milliseconds: 300);
+const Duration kDepthPollFarInterval = Duration(milliseconds: 700);
+
 const Duration kAnnouncementThrottle = Duration(milliseconds: 1500);
 const int kMaxConsecutiveFailedFrames = 3;
 const int kDetectionStabilityFrames = 4;

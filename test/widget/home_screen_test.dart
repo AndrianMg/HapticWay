@@ -9,9 +9,12 @@ import 'package:hapticway/ui/widgets/status_announcer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration_platform_interface/vibration_platform_interface.dart';
 
+import 'package:hapticway/research/woz_session_log.dart';
+
 import '../support/ar_depth_channel_mocks.dart';
 import '../support/fake_detection_source.dart';
 import '../support/fake_vibration_platform.dart';
+import '../support/fake_woz_session_log.dart';
 
 Detection _personDetection() => Detection(
       label: 'person',
@@ -49,7 +52,7 @@ void main() {
       );
 
   // Drains the _initAr()/_loadPrefs() async chain without pumpAndSettle,
-  // which would loop forever against the 300ms depth-poll periodic timer.
+  // which would loop forever against the self-rescheduling depth-poll timer.
   Future<void> settleInit(WidgetTester tester) async {
     for (var i = 0; i < 4; i++) {
       await tester.pump();
@@ -192,12 +195,40 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('override toggle persists the pref and suppresses obstacleAhead at close range', (tester) async {
+  testWidgets('alert toggles land in the session log only while one is open', (tester) async {
+    final fakeLog = FakeWozSessionLog();
+    WozSessionLog.instance = fakeLog;
+    addTearDown(WozSessionLog.reset);
+
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    // No session: §7.2 instrumentation must leave no trace.
+    // (The log's `enabled` field keeps the historic override polarity:
+    // true = alerts off.)
+    await tester.tap(find.bySemanticsLabel(RegExp('^Vibration alerts')));
+    await tester.pump();
+    expect(fakeLog.events, isEmpty);
+
+    // Session open: both edges of the toggle are recorded.
+    fakeLog.seedOpen();
+    await tester.tap(find.bySemanticsLabel(RegExp('^Vibration alerts')));
+    await tester.pump();
+    expect(fakeLog.events.last, {'event': 'override', 'enabled': false});
+
+    await tester.tap(find.bySemanticsLabel(RegExp('^Vibration alerts')));
+    await tester.pump();
+    expect(fakeLog.events.last, {'event': 'override', 'enabled': true});
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('alerts toggle persists the pref and suppresses obstacleAhead at close range', (tester) async {
     depthMock.depthMeters = 0.5; // close range -> would otherwise fire every tick
     await tester.pumpWidget(buildApp());
     await settleInit(tester);
 
-    await tester.tap(find.bySemanticsLabel(RegExp('^Haptic override')));
+    await tester.tap(find.bySemanticsLabel(RegExp('^Vibration alerts')));
     await tester.pump(); // manualOverrideOn's vibrate call + pref write
 
     expect(fakeVibration.calls, hasLength(1)); // only the toggle's confirmation buzz
@@ -518,6 +549,129 @@ void main() {
     }
     await tester.pump(); // deliver the final stream event
     expect(StatusAnnouncer.lastAnnounced, 'Scanning…');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // ── User-facing PAUSE / RESUME (the battery lever) ────────────────────────
+
+  testWidgets('PAUSE stops the pipeline, silences haptics, and shows Paused', (tester) async {
+    depthMock.depthMeters = 0.5; // close range -> vibrates every allowed tick
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    await tester.pump(const Duration(milliseconds: 300)); // one radar tick
+    expect(fakeVibration.calls, hasLength(1));
+
+    await tester.tap(find.bySemanticsLabel('Pause camera and vibration alerts'));
+    await tester.pump();
+    await tester.pump(); // drain _stopPipeline's async teardown
+
+    expect(find.textContaining('Paused'), findsOneWidget);
+    expect(find.byIcon(Icons.pause_circle_outlined), findsOneWidget);
+    expect(fakeDetectionSource.stopped, isTrue);
+    expect(depthMock.calls.where((c) => c.method == 'stop'), isNotEmpty);
+
+    // Two would-be poll ticks: nothing may vibrate while paused.
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(fakeVibration.calls, hasLength(1));
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('RESUME restarts the pipeline', (tester) async {
+    depthMock.depthMeters = 0.5;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    await tester.tap(find.bySemanticsLabel('Pause camera and vibration alerts'));
+    await tester.pump();
+    await tester.pump();
+
+    await tester.tap(find.bySemanticsLabel('Resume camera and vibration alerts'));
+    await settleInit(tester);
+
+    expect(fakeDetectionSource.startCount, 2);
+    expect(depthMock.calls.where((c) => c.method == 'start').length, 2);
+
+    // Depth polling resumes: the haptic bar level rises on the next tick.
+    await tester.pump(const Duration(milliseconds: 300));
+    final bar = tester.widget<LinearProgressIndicator>(
+        find.byType(LinearProgressIndicator));
+    expect(bar.value, greaterThan(0));
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('returning from Settings while paused does not restart the radar', (tester) async {
+    depthMock.depthMeters = 0.5;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    await tester.tap(find.bySemanticsLabel('Pause camera and vibration alerts'));
+    await tester.pump();
+    await tester.pump(); // drain _stopPipeline's async teardown
+
+    await tester.tap(find.bySemanticsLabel('Open settings'));
+    await tester.pump(); // Navigator.push starts building the Settings route
+    await tester.pump(); // SettingsScreen's _loadPrefs await resolves
+    await tester.tap(find.byIcon(Icons.arrow_back));
+    await tester.pump(); // pop completes the route future
+    await tester.pump(); // .then callback runs — must NOT restart the poll
+
+    // The AR session is down: polling now would throw every tick and falsely
+    // announce 'Depth sensing unavailable'.
+    final samplesBefore =
+        depthMock.calls.where((c) => c.method == 'sampleDepth').length;
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 700));
+    final samplesAfter =
+        depthMock.calls.where((c) => c.method == 'sampleDepth').length;
+    expect(samplesAfter, samplesBefore);
+    expect(fakeVibration.calls, isEmpty);
+    expect(find.textContaining('Paused'), findsOneWidget);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // ── Adaptive depth-poll cadence (battery) ──────────────────────────────────
+
+  testWidgets('a far reading slows the depth poll to the far interval', (tester) async {
+    depthMock.depthMeters = 5.0; // beyond kMaxDistanceMeters -> far cadence
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    int samples() =>
+        depthMock.calls.where((c) => c.method == 'sampleDepth').length;
+
+    // First tick always runs at the near cadence (t=300).
+    await tester.pump(kDepthPollNearInterval);
+    expect(samples(), 1);
+
+    // The far reading backs the chain off to 700ms: nothing fires at t=600…
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(samples(), 1);
+
+    // …but the next tick lands by t=1000.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(samples(), 2);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a near reading keeps the depth poll at the fast cadence', (tester) async {
+    depthMock.depthMeters = 1.0; // inside haptic range -> near cadence
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    int samples() =>
+        depthMock.calls.where((c) => c.method == 'sampleDepth').length;
+
+    await tester.pump(kDepthPollNearInterval);
+    expect(samples(), 1);
+    await tester.pump(kDepthPollNearInterval);
+    expect(samples(), 2);
 
     await tester.pumpWidget(const SizedBox());
   });

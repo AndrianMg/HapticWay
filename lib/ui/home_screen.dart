@@ -14,6 +14,7 @@ import '../haptics/tacton.dart';
 import '../inference/camera_isolate.dart';
 import '../inference/detection.dart';
 import '../research/woz_screen.dart';
+import '../research/woz_session_log.dart';
 import 'settings_screen.dart';
 import 'widgets/status_announcer.dart';
 
@@ -29,7 +30,9 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // ── Prefs ──────────────────────────────────────────────────────────────────
-  bool _hapticOverride = false;
+  // Stored inverted as kPrefKeyOverride (true = alerts off) — the pref key and
+  // the WoZ session-log schema keep the historic override polarity.
+  bool _alertsEnabled = true;
   double _hapticK = kHapticConstantK;
 
   // ── App lifecycle ──────────────────────────────────────────────────────────
@@ -38,6 +41,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // pocket and the camera stays live while backgrounded.
   bool _pipelineRunning = false;
   bool _resumeAfterPause = false;
+  // User-facing PAUSE button — distinct from the lifecycle pause above: while
+  // set, nothing (Settings return, WoZ return) may restart the pipeline.
+  bool _userPaused = false;
   bool _wozOpen = false;
   bool _settingsOpen = false;
   int _depthFailures = 0;
@@ -69,8 +75,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   double _smoothDepth = 0.0;
 
   // ── §6.2 depth-poll haptic radar ───────────────────────────────────────────
-  // Samples the centre of the frame every 300 ms so the haptic fires even when
-  // YOLO detects nothing (e.g. walking toward a plain wall).
+  // Samples the centre of the frame so the haptic fires even when YOLO
+  // detects nothing (e.g. walking toward a plain wall). Adaptive cadence:
+  // kDepthPollNearInterval while a surface is in haptic range, backing off to
+  // kDepthPollFarInterval when nothing is close (battery).
   Timer? _depthPollTimer;
   bool _depthPollBusy = false;
 
@@ -120,7 +128,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
     setState(() {
-      _hapticOverride = prefs.getBool(kPrefKeyOverride) ?? false;
+      _alertsEnabled = !(prefs.getBool(kPrefKeyOverride) ?? false);
       _hapticK = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     });
   }
@@ -145,8 +153,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _timingSub = _isolate!.timing.listen(_onTiming);
 
       _setStatus('Scanning…');
-      _startDepthPoll();
+      // Running must be set before the poll starts — _startDepthPoll refuses
+      // to run against a stopped pipeline.
       _pipelineRunning = true;
+      _startDepthPoll();
     } on PlatformException catch (e) {
       _setStatus('Camera unavailable: ${e.message ?? e.code}');
     } catch (e) {
@@ -157,12 +167,32 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _startDepthPoll() {
-    if (_wozOpen || _settingsOpen) return;
+    // !_pipelineRunning covers the user-paused case: returning from Settings
+    // or WoZ must not start polling against a dead AR session.
+    if (_wozOpen || _settingsOpen || !_pipelineRunning) return;
     _depthPollTimer?.cancel();
-    _depthPollTimer = Timer.periodic(
-      const Duration(milliseconds: 300),
-      (_) => _pollDepth(),
-    );
+    // Always begin at the near cadence — responsiveness right after
+    // start/resume matters more than one cheap tick.
+    _scheduleDepthPoll(kDepthPollNearInterval);
+  }
+
+  // Adaptive cadence: the next tick is scheduled only after the current
+  // sample resolves — near interval while a surface sits inside haptic range,
+  // far interval when everything is out of range (or depth is unavailable).
+  void _scheduleDepthPoll(Duration interval) {
+    late final Timer timer;
+    timer = Timer(interval, () async {
+      final depthM = await _pollDepth();
+      // Every stop path (pipeline stop, WoZ/Settings push, restart) cancels
+      // and replaces _depthPollTimer — if it no longer points at this timer,
+      // the chain was stopped while sampleDepth was in flight: don't
+      // resurrect it.
+      if (!mounted || !identical(_depthPollTimer, timer)) return;
+      final near = depthM != null && depthM > 0 && depthM < kMaxDistanceMeters;
+      _scheduleDepthPoll(
+          near ? kDepthPollNearInterval : kDepthPollFarInterval);
+    });
+    _depthPollTimer = timer;
   }
 
   Future<void> _stopPipeline() async {
@@ -193,30 +223,33 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   // ── §6.2 depth-poll haptic radar ──────────────────────────────────────────
-  // Runs every 300 ms independently of YOLO detection so the haptic fires for
-  // any surface in the centre of the frame (walls, floors, plain obstacles).
-  Future<void> _pollDepth() async {
-    if (!mounted || _depthPollBusy) return;
+  // Runs independently of YOLO detection so the haptic fires for any surface
+  // in the centre of the frame (walls, floors, plain obstacles). Returns the
+  // sampled depth (null on failure) so the caller can pick the next cadence.
+  Future<double?> _pollDepth() async {
+    if (!mounted || _depthPollBusy) return null;
     _depthPollBusy = true;
     try {
       final depthM = await ArDepthChannel.instance
           .sampleDepth(0.35, 0.35, 0.65, 0.65);
-      if (!mounted) return;
+      if (!mounted) return null;
       if (depthM <= 0) {
         if (_hapticLevel > 0) setState(() => _hapticLevel = 0.0);
-        return;
+        return depthM;
       }
       final amplitude = IntensityCurve.amplitudeFor(depthM, k: _hapticK);
       setState(() => _hapticLevel = amplitude);
-      if (!_hapticOverride && depthM < kMaxDistanceMeters) {
+      if (_alertsEnabled && depthM < kMaxDistanceMeters) {
         Tacton.obstacleAhead(amplitude);
       }
       _depthFailures = 0;
+      return depthM;
     } catch (e) {
-      // A lost/paused AR session throws here every 300 ms — announce once at
+      // A lost/paused AR session throws here on every tick — announce once at
       // the threshold transition, never per tick.
       _depthFailures++;
       if (_depthFailures == 5) _setStatus('Depth sensing unavailable');
+      return null;
     } finally {
       _depthPollBusy = false;
     }
@@ -296,7 +329,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       StatusAnnouncer.announce(direction.announcement(d.label));
 
       if (direction != ObstacleDirection.ahead &&
-          !_hapticOverride &&
+          _alertsEnabled &&
           !_wozOpen &&
           !_settingsOpen &&
           depthM > 0 &&
@@ -317,22 +350,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     StatusAnnouncer.announce(text);
   }
 
-  Future<void> _toggleOverride() async {
+  Future<void> _toggleAlerts() async {
     final prefs = await SharedPreferences.getInstance();
     if (!mounted) return;
-    setState(() => _hapticOverride = !_hapticOverride);
+    setState(() => _alertsEnabled = !_alertsEnabled);
+    // §7.2: alert toggles must appear in the session record. The log's
+    // `enabled` field keeps the historic override polarity (true = alerts
+    // off) so session records stay comparable. No-op when no WoZ session is
+    // open.
+    WozSessionLog.instance.logOverride(enabled: !_alertsEnabled);
     try {
-      await prefs.setBool(kPrefKeyOverride, _hapticOverride);
+      await prefs.setBool(kPrefKeyOverride, !_alertsEnabled);
     } catch (e) {
       debugPrint('home: prefs write failed: $e');
     }
     StatusAnnouncer.announce(
-      _hapticOverride ? 'Haptic alerts disabled' : 'Haptic alerts enabled',
+      _alertsEnabled ? 'Vibration alerts on' : 'Vibration alerts off',
     );
-    if (_hapticOverride) {
-      await Tacton.manualOverrideOn();
-    } else {
+    if (_alertsEnabled) {
       await Tacton.manualOverrideOff();
+    } else {
+      await Tacton.manualOverrideOn();
+    }
+  }
+
+  // User-facing pause — the biggest battery lever. Reuses the lifecycle
+  // teardown, so camera, inference isolate, and depth poll stop together.
+  Future<void> _togglePause() async {
+    if (_userPaused) {
+      setState(() => _userPaused = false);
+      await _startPipeline();
+    } else {
+      setState(() => _userPaused = true);
+      _setStatus('Paused');
+      await _stopPipeline();
     }
   }
 
@@ -425,6 +476,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _wozTrigger?.cancel();
+    // Backstop for a forgotten END: the WoZ session outlives the panel route,
+    // so app teardown is the last chance to write session_end.
+    unawaited(WozSessionLog.instance.close());
     unawaited(_stopPipeline());
     super.dispose();
   }
@@ -518,11 +572,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           : Container(
               color: const Color(0xFF0A0A1A),
               child: Center(
-                child: _statusText.contains('unavailable')
-                    ? const Icon(Icons.no_photography_outlined,
+                // Paused first: a deliberate pause must read as paused, not
+                // as an eternal loading spinner.
+                child: _userPaused
+                    ? const Icon(Icons.pause_circle_outlined,
                         color: Color(0xFF444466), size: 64)
-                    : const CircularProgressIndicator(
-                        color: Color(0xFF4CAF50)),
+                    : _statusText.contains('unavailable')
+                        ? const Icon(Icons.no_photography_outlined,
+                            color: Color(0xFF444466), size: 64)
+                        : const CircularProgressIndicator(
+                            color: Color(0xFF4CAF50)),
               ),
             ),
     );
@@ -619,20 +678,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             order: const NumericFocusOrder(4),
             child: Semantics(
               label:
-                  'Haptic override, currently ${_hapticOverride ? 'on' : 'off'}. Double tap to toggle.',
-              toggled: _hapticOverride,
+                  'Vibration alerts, currently ${_alertsEnabled ? 'on' : 'off'}. Double tap to toggle.',
+              toggled: _alertsEnabled,
               excludeSemantics: true,
               child: SwitchListTile(
                 title: const Text(
-                  'HAPTIC OVERRIDE',
+                  'VIBRATION ALERTS',
                   style: TextStyle(
                     color: Color(0xFFE0E0E0),
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
-                value: _hapticOverride,
-                onChanged: (_) => _toggleOverride(),
+                value: _alertsEnabled,
+                onChanged: (_) => _toggleAlerts(),
                 activeThumbColor: const Color(0xFF4CAF50),
                 tileColor: const Color(0xFF0D1B2A),
                 shape: RoundedRectangleBorder(
@@ -645,24 +704,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           FocusTraversalOrder(
             order: const NumericFocusOrder(5),
             child: Semantics(
-              label: 'Open settings',
+              label: _userPaused
+                  ? 'Resume camera and vibration alerts'
+                  : 'Pause camera and vibration alerts',
               button: true,
               excludeSemantics: true,
               child: SizedBox(
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: () => _openSettings(context),
+                  onPressed: _togglePause,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF4CAF50),
+                    // Orange while paused — the app is not watching for
+                    // obstacles until the user resumes.
+                    backgroundColor: _userPaused
+                        ? const Color(0xFFFF6B35)
+                        : const Color(0xFF4CAF50),
                     foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
-                  child: const Text(
-                    'OPEN SETTINGS',
-                    style: TextStyle(fontWeight: FontWeight.bold),
+                  child: Text(
+                    _userPaused ? 'RESUME' : 'PAUSE',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
               ),

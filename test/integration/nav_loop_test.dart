@@ -64,7 +64,7 @@ void main() {
 
       expect(find.byType(HomeScreen), findsOneWidget);
 
-      await tester.tap(find.text('OPEN SETTINGS'));
+      await tester.tap(find.bySemanticsLabel('Open settings'));
       for (var i = 0; i < 4; i++) {
         await tester.pump();
       }

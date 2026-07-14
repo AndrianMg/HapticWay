@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 import '../haptics/haptic_engine.dart';
+import '../research/woz_session_log.dart';
 import 'widgets/status_announcer.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -13,7 +14,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   double _k = kHapticConstantK;
-  bool _hapticOverride = false;
+  // Stored inverted as kPrefKeyOverride (true = alerts off) — the pref key
+  // keeps the historic override polarity; only the UI reads the other way.
+  bool _alertsEnabled = true;
   int? _selectedPreset;
 
   // §7.3 benchmark condition grid: {bright,dim} × {empty,crowded}
@@ -45,7 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final k = prefs.getDouble(kPrefKeyHapticK) ?? kHapticConstantK;
     setState(() {
       _k = k;
-      _hapticOverride = prefs.getBool(kPrefKeyOverride) ?? false;
+      _alertsEnabled = !(prefs.getBool(kPrefKeyOverride) ?? false);
       _selectedPreset = _presetIndexFor(k);
     });
   }
@@ -66,15 +69,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveOverride(bool value) async {
+  Future<void> _saveAlertsEnabled(bool enabled) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(kPrefKeyOverride, value);
+      await prefs.setBool(kPrefKeyOverride, !enabled);
     } catch (e) {
       debugPrint('settings: prefs write failed: $e');
     }
     StatusAnnouncer.announce(
-      value ? 'Haptic alerts disabled' : 'Haptic alerts enabled',
+      enabled ? 'Vibration alerts on' : 'Vibration alerts off',
     );
   }
 
@@ -85,6 +88,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _k = k;
     });
     _saveK(k);
+  }
+
+  static const _pulseDuration = Duration(milliseconds: 200);
+
+  void _firePulse(_WoZPulse pulse) {
+    HapticEngine.vibrate(pulse.amplitude, _pulseDuration);
+    // §7.2: leaves a trace in an active WoZ session; no-op otherwise. The
+    // duration is passed through so log and pulse can't drift apart.
+    WozSessionLog.instance.logManualPulse(
+      amplitude: pulse.amplitude,
+      durationMs: _pulseDuration.inMilliseconds,
+    );
   }
 
   void _onSliderChanged(double value) {
@@ -116,7 +131,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const SizedBox(height: 28),
               _sectionHeading('HAPTIC ALERTS'),
               const SizedBox(height: 12),
-              _buildOverrideToggle(),
+              _buildAlertsToggle(),
               const SizedBox(height: 8),
               _buildTestButton(),
               const SizedBox(height: 28),
@@ -273,22 +288,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  Widget _buildOverrideToggle() {
+  Widget _buildAlertsToggle() {
     return FocusTraversalOrder(
       order: const NumericFocusOrder(7),
       child: Semantics(
-        label: 'Haptic override, currently ${_hapticOverride ? 'on' : 'off'}. Double tap to toggle.',
-        toggled: _hapticOverride,
+        label: 'Vibration alerts, currently ${_alertsEnabled ? 'on' : 'off'}. Double tap to toggle.',
+        toggled: _alertsEnabled,
         excludeSemantics: true,
         child: SwitchListTile(
           title: const Text(
-            'Haptic override',
+            'Vibration alerts',
             style: TextStyle(color: Color(0xFFE0E0E0), fontSize: 15),
           ),
-          value: _hapticOverride,
+          value: _alertsEnabled,
           onChanged: (v) {
-            setState(() => _hapticOverride = v);
-            _saveOverride(v);
+            setState(() => _alertsEnabled = v);
+            _saveAlertsEnabled(v);
           },
           activeThumbColor: const Color(0xFF4CAF50),
           tileColor: const Color(0xFF0D1B2A),
@@ -348,10 +363,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             button: true,
             excludeSemantics: true,
             child: OutlinedButton(
-              onPressed: () => HapticEngine.vibrate(
-                pulse.amplitude,
-                const Duration(milliseconds: 200),
-              ),
+              onPressed: () => _firePulse(pulse),
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFFE0E0E0),
                 side: const BorderSide(color: Color(0xFF444466)),

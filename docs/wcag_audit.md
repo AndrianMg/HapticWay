@@ -88,15 +88,15 @@ Caveats are recorded against individual success criteria below — they are scop
 
 | WCAG SC | Level | Verdict | Evidence (`file:line`) |
 |---|---|---|---|
-| 3.2.2 On Input | A | Pass | Toggle and button only act on explicit activation; `_toggleOverride` at `lib/ui/home_screen.dart:31-38` fires on the switch's `onChanged`, not on focus. |
+| 3.2.2 On Input | A | Pass | Toggle and button only act on explicit activation; `_toggleAlerts` (formerly `_toggleOverride`) at `lib/ui/home_screen.dart:31-38` fires on the switch's `onChanged`, not on focus. |
 | 3.3.1 Error Identification | A | Pass | "Detection unavailable" status message specified for ≥ 3 consecutive frame failures via `kMaxConsecutiveFailedFrames` at `lib/core/constants.dart:12`. Plumbed in Phase 3 (`HAPTICWAY_CODING_TODO.md:457`). Status card live region at `lib/ui/home_screen.dart:127-128` is the announcement surface. |
-| 3.3.2 Labels or Instructions | A | Pass | Toggle announces its current state in its label at `lib/ui/home_screen.dart:203`; override action is described in plain English. |
+| 3.3.2 Labels or Instructions | A | Pass | Toggle announces its current state in its label at `lib/ui/home_screen.dart:203`; the "Vibration alerts" action is described in plain English (ON = alerts on — the double-negative "Haptic override" label was replaced). |
 
 ### 2.4 Robust
 
 | WCAG SC | Level | Verdict | Evidence (`file:line`) |
 |---|---|---|---|
-| 4.1.2 Name, Role, Value | A | Pass | Settings icon: `button: true` at `lib/ui/home_screen.dart:91`. Override toggle: `toggled: _hapticOverride` at `:204` exposes the on/off state. Open-settings button: `button: true` at `:230`. |
+| 4.1.2 Name, Role, Value | A | Pass | Settings icon: `button: true` at `lib/ui/home_screen.dart:91`. Vibration-alerts toggle: `toggled: _alertsEnabled` at `:204` exposes the on/off state. Pause/Resume button (replaced the redundant open-settings button): `button: true`, label states the current action. |
 | 4.1.3 Status Messages | AA | Pass | All spoken status changes route through `StatusAnnouncer.announce()` (`SemanticsService.sendAnnouncement`), which honours the 1500 ms identical-string throttle at `lib/ui/widgets/status_announcer.dart:14-16` — detections via `_applyDetection`, and status transitions (Scanning/Paused/errors) via `_setStatus`. The status card is deliberately **not** a `liveRegion`: its visible text updates at frame rate (smoothed confidence/depth), and a live region hands every mutation to TalkBack unthrottled — pre-§7.4 TalkBack use found this flooded the speech queue (delayed, repeated announcements). Regression-guarded by three tests in `test/widget/home_screen_test.dart` ("TalkBack announcement flood" section). |
 
 ---
