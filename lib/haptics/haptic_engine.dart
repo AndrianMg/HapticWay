@@ -39,6 +39,24 @@ class HapticEngine {
   static Duration? _lastPattern;
   static int _consecutiveFailures = 0;
 
+  // Device capabilities never change at runtime, so each platform-channel
+  // round-trip is paid once per launch instead of on every pulse (up to 2/s).
+  // hasVibrator caches the positive result only: a `false` probe stays
+  // re-queryable, mirroring the rule that a no-vibrator probe must not
+  // consume a throttle window.
+  static bool? _cachedHasVibrator;
+  static bool? _cachedHasAmplitudeControl;
+
+  static Future<bool> _hasVibrator() async {
+    if (_cachedHasVibrator == true) return true;
+    final has = await Vibration.hasVibrator();
+    if (has) _cachedHasVibrator = true;
+    return has;
+  }
+
+  static Future<bool> _hasAmplitudeControl() async =>
+      _cachedHasAmplitudeControl ??= await Vibration.hasAmplitudeControl();
+
   @visibleForTesting
   static int get consecutiveFailures => _consecutiveFailures;
 
@@ -58,9 +76,9 @@ class HapticEngine {
     try {
       // Before consuming the throttle window — a no-vibrator device must not
       // block a pulse that a later call could deliver.
-      if (!await Vibration.hasVibrator()) return;
+      if (!await _hasVibrator()) return;
       _lastPulse = now;
-      final hasAmplitude = await Vibration.hasAmplitudeControl();
+      final hasAmplitude = await _hasAmplitudeControl();
       final amplitudeInt = hasAmplitude
           ? (amplitude * 255).round().clamp(1, 255)
           : -1; // -1 = device default amplitude
@@ -88,7 +106,7 @@ class HapticEngine {
     }
     try {
       // Before consuming the window — mirrors vibrate()'s no-vibrator rule.
-      if (!await Vibration.hasVibrator()) return;
+      if (!await _hasVibrator()) return;
       _lastPattern = now;
       await Vibration.vibrate(pattern: pattern, intensities: intensities);
       _consecutiveFailures = 0;
@@ -104,7 +122,7 @@ class HapticEngine {
     required int amplitude,
   }) async {
     try {
-      if (!await Vibration.hasVibrator()) return;
+      if (!await _hasVibrator()) return;
       await Vibration.vibrate(duration: durationMs, amplitude: amplitude);
       _consecutiveFailures = 0;
     } catch (e) {
@@ -129,6 +147,8 @@ class HapticEngine {
     _lastPulse = null;
     _lastPattern = null;
     _consecutiveFailures = 0;
+    _cachedHasVibrator = null;
+    _cachedHasAmplitudeControl = null;
     elapsed = () => _clock.elapsed;
   }
 }

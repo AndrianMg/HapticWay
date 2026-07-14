@@ -99,6 +99,30 @@ void main() {
     });
   });
 
+  group('HapticEngine capability caching', () {
+    test('capability probes hit the platform channel once across pulses', () async {
+      await Tacton.obstacleAhead(0.6);
+      advance(const Duration(milliseconds: 600));
+      await Tacton.obstacleAhead(0.6);
+      expect(fake.calls, hasLength(2));
+      expect(fake.hasVibratorCallCount, 1);
+      expect(fake.hasAmplitudeControlCallCount, 1);
+    });
+
+    test('a no-vibrator result is never cached', () async {
+      // A device does not grow a vibrator at runtime, but a transiently
+      // failing probe must not permanently silence the app.
+      fake.hasVibratorValue = false;
+      await Tacton.obstacleAhead(0.6);
+      expect(fake.hasVibratorCallCount, 1);
+
+      fake.hasVibratorValue = true;
+      await Tacton.obstacleAhead(0.6);
+      expect(fake.hasVibratorCallCount, 2); // re-probed, then cached
+      expect(fake.calls, hasLength(1));
+    });
+  });
+
   group('HapticEngine failure surfacing', () {
     test('3 consecutive failures announce "Haptic feedback unavailable"', () async {
       fake.vibrateError = PlatformException(code: 'VIBRATE_FAIL');

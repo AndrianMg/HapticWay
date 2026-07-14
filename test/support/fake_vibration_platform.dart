@@ -25,14 +25,25 @@ class FakeVibrationPlatform extends VibrationPlatform {
   bool hasAmplitudeControlValue = true;
   final List<VibrateCall> calls = [];
 
+  // Probe counters — let tests assert HapticEngine's capability cache keeps
+  // these platform-channel round-trips off the per-pulse path.
+  int hasVibratorCallCount = 0;
+  int hasAmplitudeControlCallCount = 0;
+
   /// When set, every `vibrate(...)` call throws this instead of recording.
   Object? vibrateError;
 
   @override
-  Future<bool> hasVibrator() async => hasVibratorValue;
+  Future<bool> hasVibrator() async {
+    hasVibratorCallCount++;
+    return hasVibratorValue;
+  }
 
   @override
-  Future<bool> hasAmplitudeControl() async => hasAmplitudeControlValue;
+  Future<bool> hasAmplitudeControl() async {
+    hasAmplitudeControlCallCount++;
+    return hasAmplitudeControlValue;
+  }
 
   @override
   Future<bool> hasCustomVibrationsSupport() async => true;
