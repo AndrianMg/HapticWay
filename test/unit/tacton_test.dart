@@ -258,6 +258,10 @@ void main() {
           'door ahead, 3 metres');
       expect(ObstacleDirection.left.announcement('door', distanceMetres: 1),
           'door on your left, 1 metre');
+      // Bucket 0 = sub-metre: never "0 metres", never an overstated "1 metre"
+      // (field finding: screen showed 0.5 m while the voice said "1 metre").
+      expect(ObstacleDirection.ahead.announcement('door', distanceMetres: 0),
+          'door ahead, less than 1 metre');
       // No distance available -> direction-only phrase, unchanged.
       expect(ObstacleDirection.ahead.announcement('door'), 'door ahead');
     });
@@ -265,7 +269,12 @@ void main() {
     test('spokenDistanceBucket rounds plainly with no previous bucket', () {
       expect(spokenDistanceBucket(2.6, null), 3);
       expect(spokenDistanceBucket(2.4, null), 2);
-      expect(spokenDistanceBucket(0.3, null), 1); // clamped — never "0 metres"
+      // Sub-metre readings land in bucket 0 ("less than 1 metre").
+      expect(spokenDistanceBucket(0.3, null), 0);
+      // Exact boundaries resolve DOWN — speech never overstates clearance,
+      // and the WoZ 0.5 chip speaks "less than 1 metre", not "1 metre".
+      expect(spokenDistanceBucket(0.5, null), 0);
+      expect(spokenDistanceBucket(1.5, null), 1);
     });
 
     test('bucket is sticky inside the hysteresis margin', () {
@@ -280,6 +289,8 @@ void main() {
     test('bucket switches once the crossing is decisive', () {
       expect(spokenDistanceBucket(2.2, 3), 2);
       expect(spokenDistanceBucket(3.8, 3), 4);
+      expect(spokenDistanceBucket(0.2, 1), 0); // into the sub-metre band
+      expect(spokenDistanceBucket(0.8, 0), 1); // and back out
     });
   });
 

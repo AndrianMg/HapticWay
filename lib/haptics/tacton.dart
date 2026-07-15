@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import '../core/constants.dart';
 import 'haptic_engine.dart';
 
@@ -11,7 +9,9 @@ enum ObstacleDirection {
   right;
 
   /// TTS phrase for a detection of [label] in this direction, optionally
-  /// with a spoken distance bucket: "door ahead, 2 metres". Null distance
+  /// with a spoken distance bucket: "door ahead, 2 metres". Bucket 0 is
+  /// spoken as "less than 1 metre" — never "0 metres", and never an
+  /// overstated "1 metre" while the status card shows 0.5 m. Null distance
   /// (no valid depth sample) keeps the direction-only phrase.
   String announcement(String label, {int? distanceMetres}) {
     final base = switch (this) {
@@ -20,6 +20,7 @@ enum ObstacleDirection {
       ObstacleDirection.right => '$label on your right',
     };
     if (distanceMetres == null) return base;
+    if (distanceMetres == 0) return '$base, less than 1 metre';
     return '$base, $distanceMetres metre${distanceMetres == 1 ? '' : 's'}';
   }
 }
@@ -28,15 +29,17 @@ enum ObstacleDirection {
 /// bucket only changes once [depthMeters] has left the previous bucket's
 /// half-metre band by [kSpokenDistanceHysteresis]. Same jitter→hysteresis
 /// family as [directionWithHysteresis] — an EMA'd depth oscillating around a
-/// boundary must not alternate spoken strings. Clamped to >= 1 so speech
-/// never says "0 metres"; below a metre the haptic amplitude carries the
-/// urgency.
+/// boundary must not alternate spoken strings. Bucket 0 covers the sub-metre
+/// range and is spoken as "less than 1 metre".
 int spokenDistanceBucket(double depthMeters, int? previous) {
   if (previous != null &&
       (depthMeters - previous).abs() <= 0.5 + kSpokenDistanceHysteresis) {
     return previous;
   }
-  return math.max(1, depthMeters.round());
+  // Half-DOWN bucketing: an exact boundary resolves to the nearer bucket, so
+  // the spoken clearance never exceeds the true one (the WoZ 0.5 chip says
+  // "less than 1 metre", not "1 metre").
+  return (depthMeters - 0.5).ceil();
 }
 
 /// Classifies a normalised bbox centre-x into a direction band.

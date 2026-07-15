@@ -602,6 +602,24 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('sub-metre detections announce "less than 1 metre"', (tester) async {
+    // Field finding: the card showed ~0.5 m while the voice said "1 metre" —
+    // the spoken clearance must never exceed the displayed one.
+    depthMock.depthMeters = 0.4;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(StatusAnnouncer.lastAnnounced, 'person ahead, less than 1 metre');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   // ── TalkBack activation (field finding: focused button, double-tap dead) ──
   // TalkBack's double-tap performs SemanticsAction.tap on the focused node —
   // pointer taps in other tests never exercise this path.
