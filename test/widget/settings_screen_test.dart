@@ -99,6 +99,19 @@ void main() {
     });
   });
 
+  testWidgets('back button tap target is large enough for low vision', (tester) async {
+    // Field feedback: the 48px arrow was too small to hit for a visually
+    // impaired user — the primary user group. Wide bar, not an icon dot.
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    final size = tester.getSize(find.byWidgetPredicate((w) =>
+        w is Semantics &&
+        w.properties.label == 'Back, navigate to home screen'));
+    expect(size.width, greaterThanOrEqualTo(96));
+    expect(size.height, greaterThanOrEqualTo(56));
+  });
+
   testWidgets('back button is its own semantics node with a tap action', (tester) async {
     // Field finding: under TalkBack the back button was dead — its Semantics
     // wrapper excluded the IconButton's tap action without declaring one, and

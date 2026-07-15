@@ -153,39 +153,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    return Row(
-      children: [
-        FocusTraversalOrder(
-          order: const NumericFocusOrder(1),
-          child: Semantics(
-            label: 'Back, navigate to home screen',
-            button: true,
-            // container keeps this its own node — without it the annotation
-            // merges with the 'Settings' title inside the ListView item and
-            // TalkBack reads (and mis-targets) the whole header row. The
-            // explicit onTap restores the action excludeSemantics discards.
-            container: true,
-            onTap: () => Navigator.pop(context),
-            excludeSemantics: true,
-            child: IconButton(
-              onPressed: () => Navigator.pop(context),
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              padding: const EdgeInsets.all(12),
-              constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+    return SizedBox(
+      height: 64,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          // Centered title — a heading for TalkBack, deliberately NOT a tap
+          // target (field feedback: only the back bar should be actionable
+          // in the header).
+          Semantics(
+            header: true,
+            child: const Text(
+              'Settings',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
-        ),
-        const Expanded(
-          child: Text(
-            'Settings',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FocusTraversalOrder(
+              order: const NumericFocusOrder(1),
+              child: Semantics(
+                label: 'Back, navigate to home screen',
+                button: true,
+                // container keeps this its own node — without it the
+                // annotation merges with the 'Settings' title inside the
+                // ListView item and TalkBack reads (and mis-targets) the
+                // whole header row. The explicit onTap restores the action
+                // excludeSemantics discards.
+                container: true,
+                onTap: () => Navigator.pop(context),
+                excludeSemantics: true,
+                // Wide bar, not an icon dot — field feedback from a visually
+                // impaired user: the 48px arrow was too small to hit.
+                child: SizedBox(
+                  width: 112,
+                  height: 56,
+                  child: TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFF0D1B2A),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Icon(Icons.arrow_back, size: 32),
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
