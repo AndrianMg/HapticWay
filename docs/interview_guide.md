@@ -41,31 +41,35 @@ optional.
 2. Two pulses meant left and three meant right — did that coding become
    automatic by the end, or did you still have to think about it?
 
-**Distance perception (intensity curve)**
+**Distance perception (intensity curve and spoken metres)**
 
 3. Did the vibration strength give you a sense of how close an obstacle was?
 4. Was there a point where the strength felt wrong for the distance — too
    strong far away, or too weak up close?
-5. Did you adjust the sensitivity setting (or would you want to)? What felt
+5. The voice also announced distances in whole metres ("door ahead,
+   2 metres", "less than 1 metre"). Did the spoken distances match how far
+   away things actually felt? When judging distance, did you rely more on
+   the words or on the vibration?
+6. Did you adjust the sensitivity setting (or would you want to)? What felt
    right for you?
 
 **Trust and reliance**
 
-6. Would you rely on this alongside your cane or guide dog? Instead of them?
+7. Would you rely on this alongside your cane or guide dog? Instead of them?
    Why?
-7. Were there moments the app signalled an obstacle you don't think was
+8. Were there moments the app signalled an obstacle you don't think was
    there? How did those false alarms affect your confidence in it?
-8. Were there moments it stayed silent when you expected a warning?
+9. Were there moments it stayed silent when you expected a warning?
 
 **Safety and reactions**
 
-9. Did you ever feel unsafe during the task? Walk me through that moment.
-10. When a vibration or announcement came, how quickly could you act on it?
+10. Did you ever feel unsafe during the task? Walk me through that moment.
+11. When a vibration or announcement came, how quickly could you act on it?
     Did any alert arrive too late to be useful?
-11. Did you turn the vibration alerts off at any point (the "Vibration
+12. Did you turn the vibration alerts off at any point (the "Vibration
     alerts" switch)? When and why?
 
 **Wrap-up**
 
-12. If you could change one thing about HapticWay, what would it be?
-13. Anything else you want to tell me that I didn't ask about?
+13. If you could change one thing about HapticWay, what would it be?
+14. Anything else you want to tell me that I didn't ask about?
