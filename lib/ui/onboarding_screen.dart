@@ -310,6 +310,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Semantics(
             label: 'Open system settings to enable camera access',
             button: true,
+            onTap: openAppSettings,
             excludeSemantics: true,
             child: SizedBox(
               height: 56,
@@ -342,6 +343,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         label: 'I agree, get started. '
             'Activates camera and vibration access and opens the navigation screen.',
         button: true,
+        enabled: !_loading,
+        onTap: _loading ? null : _onAgree,
         excludeSemantics: true,
         child: SizedBox(
           width: double.infinity,

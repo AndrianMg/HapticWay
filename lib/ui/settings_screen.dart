@@ -160,6 +160,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Semantics(
             label: 'Back, navigate to home screen',
             button: true,
+            // container keeps this its own node — without it the annotation
+            // merges with the 'Settings' title inside the ListView item and
+            // TalkBack reads (and mis-targets) the whole header row. The
+            // explicit onTap restores the action excludeSemantics discards.
+            container: true,
+            onTap: () => Navigator.pop(context),
             excludeSemantics: true,
             child: IconButton(
               onPressed: () => Navigator.pop(context),
@@ -212,6 +218,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 label: '${preset.label} preset, k equals ${preset.k}. ${selected ? 'Selected.' : 'Not selected.'} Double tap to select.',
                 selected: selected,
                 button: true,
+                onTap: () => _selectPreset(i),
                 excludeSemantics: true,
                 child: SizedBox(
                   height: 48,
@@ -294,6 +301,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Semantics(
         label: 'Vibration alerts, currently ${_alertsEnabled ? 'on' : 'off'}. Double tap to toggle.',
         toggled: _alertsEnabled,
+        onTap: () {
+          final v = !_alertsEnabled;
+          setState(() => _alertsEnabled = v);
+          _saveAlertsEnabled(v);
+        },
         excludeSemantics: true,
         child: SwitchListTile(
           title: const Text(
@@ -319,6 +331,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Semantics(
         label: 'Test vibration. Fires haptic pulse at current sensitivity for 300 milliseconds.',
         button: true,
+        onTap: () => HapticEngine.vibrate(
+          _k.clamp(0.0, 1.0),
+          const Duration(milliseconds: 300),
+        ),
         excludeSemantics: true,
         child: SizedBox(
           width: double.infinity,
@@ -361,6 +377,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           child: Semantics(
             label: '${pulse.label} pulse, amplitude ${pulse.amplitude}, 200 milliseconds.',
             button: true,
+            onTap: () => _firePulse(pulse),
             excludeSemantics: true,
             child: OutlinedButton(
               onPressed: () => _firePulse(pulse),
@@ -450,6 +467,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     '${isSelected ? 'Selected.' : 'Not selected.'} Double tap to select.',
                 selected: isSelected,
                 button: true,
+                onTap: () => onSelect(option),
                 excludeSemantics: true,
                 child: ChoiceChip(
                   label: Text(option),
@@ -479,6 +497,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         label: 'Start latency benchmark for $_benchLighting $_benchScene condition. '
             'Collects 20 frames then saves a CSV report.',
         button: true,
+        onTap: _startBenchmark,
         excludeSemantics: true,
         child: SizedBox(
           width: double.infinity,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hapticway/core/constants.dart';
 import 'package:hapticway/research/woz_session_log.dart';
@@ -96,6 +97,26 @@ void main() {
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.getDouble(kPrefKeyHapticK), closeTo(0.6, 1e-9));
     });
+  });
+
+  testWidgets('back button is its own semantics node with a tap action', (tester) async {
+    // Field finding: under TalkBack the back button was dead — its Semantics
+    // wrapper excluded the IconButton's tap action without declaring one, and
+    // the node merged with the 'Settings' title inside the ListView item, so
+    // double-tap had nothing to activate.
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(buildApp());
+    await tester.pumpAndSettle();
+
+    final node =
+        tester.getSemantics(find.bySemanticsLabel(RegExp('^Back, navigate')));
+    final data = node.getSemanticsData();
+    expect(data.label, 'Back, navigate to home screen',
+        reason: 'merged with the title — TalkBack reads the whole header row');
+    expect(data.hasAction(SemanticsAction.tap), isTrue,
+        reason: 'no tap action — TalkBack double-tap would be a no-op');
+
+    semantics.dispose();
   });
 
   testWidgets('alerts toggle persists kPrefKeyOverride (inverted)', (tester) async {

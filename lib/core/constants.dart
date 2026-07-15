@@ -21,6 +21,13 @@ const String kPrefKeyOnboardingComplete = 'onboarding_complete';
 const Duration kDepthPollNearInterval = Duration(milliseconds: 300);
 const Duration kDepthPollFarInterval = Duration(milliseconds: 700);
 
+// The spoken distance bucket (whole metres) may only change once the smoothed
+// depth has left the previous bucket's band by this margin — jitter at a
+// boundary would otherwise alternate announcement strings, and every *new*
+// string bypasses StatusAnnouncer's identical-string throttle (the same
+// failure family as the §7.4 TalkBack flood).
+const double kSpokenDistanceHysteresis = 0.25;
+
 const Duration kAnnouncementThrottle = Duration(milliseconds: 1500);
 const int kMaxConsecutiveFailedFrames = 3;
 const int kDetectionStabilityFrames = 4;

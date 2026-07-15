@@ -46,7 +46,9 @@ void main() {
 
     expect(fakeVibration.calls, hasLength(1));
     expect(fakeVibration.calls.single.pattern, [0, 80, 80, 80]);
-    expect(StatusAnnouncer.lastAnnounced, 'person on your left');
+    // Default distance chip is 1.0 m — the injection speaks it, matching the
+    // live pipeline's announcement format.
+    expect(StatusAnnouncer.lastAnnounced, 'person on your left, 1 metre');
     expect(find.textContaining('SIM  person LEFT'), findsOneWidget);
   });
 
@@ -59,7 +61,7 @@ void main() {
 
     expect(fakeVibration.calls, hasLength(1));
     expect(fakeVibration.calls.single.duration, 200);
-    expect(StatusAnnouncer.lastAnnounced, 'person ahead');
+    expect(StatusAnnouncer.lastAnnounced, 'person ahead, 1 metre');
   });
 
   testWidgets('START prompts for a participant ID; cancel starts no session', (tester) async {

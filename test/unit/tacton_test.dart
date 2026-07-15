@@ -252,6 +252,37 @@ void main() {
     });
   });
 
+  group('Spoken distance', () {
+    test('announcement appends the distance with singular/plural metres', () {
+      expect(ObstacleDirection.ahead.announcement('door', distanceMetres: 3),
+          'door ahead, 3 metres');
+      expect(ObstacleDirection.left.announcement('door', distanceMetres: 1),
+          'door on your left, 1 metre');
+      // No distance available -> direction-only phrase, unchanged.
+      expect(ObstacleDirection.ahead.announcement('door'), 'door ahead');
+    });
+
+    test('spokenDistanceBucket rounds plainly with no previous bucket', () {
+      expect(spokenDistanceBucket(2.6, null), 3);
+      expect(spokenDistanceBucket(2.4, null), 2);
+      expect(spokenDistanceBucket(0.3, null), 1); // clamped — never "0 metres"
+    });
+
+    test('bucket is sticky inside the hysteresis margin', () {
+      // Depth jitter around a bucket boundary must not re-announce — the
+      // TalkBack-flood lesson: alternating strings bypass the identical-string
+      // throttle entirely.
+      expect(spokenDistanceBucket(2.4, 3), 3);
+      expect(spokenDistanceBucket(3.6, 3), 3);
+      expect(spokenDistanceBucket(0.4, 1), 1);
+    });
+
+    test('bucket switches once the crossing is decisive', () {
+      expect(spokenDistanceBucket(2.2, 3), 2);
+      expect(spokenDistanceBucket(3.8, 3), 4);
+    });
+  });
+
   group('directionWithHysteresis', () {
     test('a null previous classifies plainly (no stickiness)', () {
       expect(directionWithHysteresis(0.20, null), ObstacleDirection.left);

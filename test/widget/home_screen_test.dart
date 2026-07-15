@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hapticway/core/constants.dart';
 import 'package:hapticway/haptics/haptic_engine.dart';
 import 'package:hapticway/inference/detection.dart';
 import 'package:hapticway/ui/home_screen.dart';
+import 'package:hapticway/ui/settings_screen.dart';
 import 'package:hapticway/ui/widgets/status_announcer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:vibration_platform_interface/vibration_platform_interface.dart';
@@ -464,7 +466,7 @@ void main() {
       await tester.pump();
     }
     await tester.pump(); // let _applyDetection's depth-channel await resolve
-    expect(StatusAnnouncer.lastAnnounced, 'door on your left');
+    expect(StatusAnnouncer.lastAnnounced, 'door on your left, 1 metre');
 
     // Jitter across the 0.35 boundary but inside the hysteresis margin
     // (0.34 and 0.36) — without hysteresis, the 0.36 frame reclassifies as
@@ -477,7 +479,7 @@ void main() {
     }
     await tester.pump();
 
-    expect(StatusAnnouncer.lastAnnounced, 'door on your left');
+    expect(StatusAnnouncer.lastAnnounced, 'door on your left, 1 metre');
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -541,7 +543,7 @@ void main() {
       await tester.pump();
     }
     await tester.pump();
-    expect(StatusAnnouncer.lastAnnounced, 'person ahead');
+    expect(StatusAnnouncer.lastAnnounced, 'person ahead, 1 metre');
 
     for (var i = 0; i < kDetectionLossFrames; i++) {
       fakeDetectionSource.addDetections([]);
@@ -550,6 +552,51 @@ void main() {
     await tester.pump(); // deliver the final stream event
     expect(StatusAnnouncer.lastAnnounced, 'Scanning…');
 
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // ── Spoken distance (field finding: TalkBack said "door ahead", no range) ─
+
+  testWidgets('detection announcement includes the bucketed distance', (tester) async {
+    depthMock.depthMeters = 2.8;
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]);
+      await tester.pump();
+    }
+    await tester.pump(); // let _applyDetection's depth-channel await resolve
+
+    expect(StatusAnnouncer.lastAnnounced, 'person ahead, 3 metres');
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  // ── TalkBack activation (field finding: focused button, double-tap dead) ──
+  // TalkBack's double-tap performs SemanticsAction.tap on the focused node —
+  // pointer taps in other tests never exercise this path.
+
+  testWidgets('the settings gear opens Settings via its semantics tap action', (tester) async {
+    final semantics = tester.ensureSemantics();
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+
+    final node = tester.getSemantics(find.bySemanticsLabel('Open settings'));
+    expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue,
+        reason: 'no tap action — TalkBack double-tap would be a no-op');
+
+    // Invoke the wrapper's onTap directly (repo idiom — see the settings
+    // slider helper): SemanticsOwner.performAction by node id proved flaky
+    // under test-runner load in this suite.
+    final wrapper = tester.widget<Semantics>(find.byWidgetPredicate(
+        (w) => w is Semantics && w.properties.label == 'Open settings'));
+    wrapper.properties.onTap!();
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(SettingsScreen), findsOneWidget);
+
+    semantics.dispose();
     await tester.pumpWidget(const SizedBox());
   });
 

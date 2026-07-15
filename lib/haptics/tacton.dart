@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import '../core/constants.dart';
 import 'haptic_engine.dart';
 
@@ -8,12 +10,33 @@ enum ObstacleDirection {
   ahead,
   right;
 
-  /// TTS phrase for a detection of [label] in this direction.
-  String announcement(String label) => switch (this) {
-        ObstacleDirection.left => '$label on your left',
-        ObstacleDirection.ahead => '$label ahead',
-        ObstacleDirection.right => '$label on your right',
-      };
+  /// TTS phrase for a detection of [label] in this direction, optionally
+  /// with a spoken distance bucket: "door ahead, 2 metres". Null distance
+  /// (no valid depth sample) keeps the direction-only phrase.
+  String announcement(String label, {int? distanceMetres}) {
+    final base = switch (this) {
+      ObstacleDirection.left => '$label on your left',
+      ObstacleDirection.ahead => '$label ahead',
+      ObstacleDirection.right => '$label on your right',
+    };
+    if (distanceMetres == null) return base;
+    return '$base, $distanceMetres metre${distanceMetres == 1 ? '' : 's'}';
+  }
+}
+
+/// Whole-metre bucket for the spoken distance, sticky around [previous]: the
+/// bucket only changes once [depthMeters] has left the previous bucket's
+/// half-metre band by [kSpokenDistanceHysteresis]. Same jitter→hysteresis
+/// family as [directionWithHysteresis] — an EMA'd depth oscillating around a
+/// boundary must not alternate spoken strings. Clamped to >= 1 so speech
+/// never says "0 metres"; below a metre the haptic amplitude carries the
+/// urgency.
+int spokenDistanceBucket(double depthMeters, int? previous) {
+  if (previous != null &&
+      (depthMeters - previous).abs() <= 0.5 + kSpokenDistanceHysteresis) {
+    return previous;
+  }
+  return math.max(1, depthMeters.round());
 }
 
 /// Classifies a normalised bbox centre-x into a direction band.

@@ -146,7 +146,11 @@ class _WozScreenState extends State<WozScreen> {
   void _inject(String label) {
     final amplitude = IntensityCurve.amplitudeFor(_distance, k: _hapticK);
     Tacton.obstacle(_direction, amplitude);
-    StatusAnnouncer.announce(_direction.announcement(label));
+    // Same announcement format as the live pipeline (label, direction,
+    // bucketed metres) so WoZ and live segments sound identical to the
+    // participant. No hysteresis state — injections are discrete events.
+    StatusAnnouncer.announce(_direction.announcement(label,
+        distanceMetres: spokenDistanceBucket(_distance, null)));
     _log.logSim(
       label: label,
       distanceMeters: _distance,

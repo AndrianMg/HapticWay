@@ -66,6 +66,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String? _stableLabel;
   int _stableCount = 0;
   ObstacleDirection? _lastDirection;
+  // Whole-metre bucket last spoken for the tracked object — hysteresis state
+  // for spokenDistanceBucket, reset whenever the tracked label changes.
+  int? _spokenDistanceBucket;
   int _emptyFrames = 0;
 
   // ── Detection display smoothing ────────────────────────────────────────────
@@ -272,6 +275,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _stableLabel = null;
       _stableCount = 0;
       _lastDirection = null;
+      _spokenDistanceBucket = null;
       _emptyFrames = 0;
       _setStatus('Scanning…');
       return;
@@ -288,6 +292,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _smoothConf   = 0.0;
       _smoothDepth  = 0.0;
       _lastDirection = null;
+      _spokenDistanceBucket = null;
     }
     if (_stableCount < kDetectionStabilityFrames) return;
 
@@ -319,6 +324,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           (d.bbox.left + d.bbox.right) / 2, _lastDirection);
       _lastDirection = direction;
 
+      // Field finding (§7.4): speech carried no range at all — TalkBack users
+      // heard "door ahead" with no idea whether that meant 1 m or 4 m.
+      // Bucketed to whole metres with hysteresis so a jittering depth cannot
+      // alternate strings past the announcer's identical-string throttle.
+      if (_smoothDepth > 0) {
+        _spokenDistanceBucket =
+            spokenDistanceBucket(_smoothDepth, _spokenDistanceBucket);
+      }
+
       if (!mounted) return;
       setState(() {
         _statusText = '${d.label} detected (${(_smoothConf * 100).round()}%)'
@@ -326,7 +340,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             '${direction == ObstacleDirection.ahead ? '' : ' — ${direction.name}'}';
       });
 
-      StatusAnnouncer.announce(direction.announcement(d.label));
+      StatusAnnouncer.announce(direction.announcement(d.label,
+          distanceMetres: _smoothDepth > 0 ? _spokenDistanceBucket : null));
 
       if (direction != ObstacleDirection.ahead &&
           _alertsEnabled &&
@@ -538,6 +553,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             child: Semantics(
               label: 'Open settings',
               button: true,
+              // excludeSemantics drops the child's tap action with the rest
+              // of its semantics — TalkBack double-tap dispatches the node's
+              // tap action, so every excluded control must declare one.
+              onTap: () => _openSettings(context),
               excludeSemantics: true,
               child: IconButton(
                 onPressed: () => _openSettings(context),
@@ -680,6 +699,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               label:
                   'Vibration alerts, currently ${_alertsEnabled ? 'on' : 'off'}. Double tap to toggle.',
               toggled: _alertsEnabled,
+              onTap: _toggleAlerts,
               excludeSemantics: true,
               child: SwitchListTile(
                 title: const Text(
@@ -708,6 +728,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ? 'Resume camera and vibration alerts'
                   : 'Pause camera and vibration alerts',
               button: true,
+              onTap: _togglePause,
               excludeSemantics: true,
               child: SizedBox(
                 width: double.infinity,
