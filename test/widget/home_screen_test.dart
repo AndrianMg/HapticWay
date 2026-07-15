@@ -397,6 +397,9 @@ void main() {
     await tester.pump(); // let _applyDetection's depth-channel await resolve
 
     expect(fakeVibration.calls, isEmpty);
+    // Same contract for speech: real detections must not talk over a WoZ
+    // session either.
+    expect(StatusAnnouncer.lastAnnounced, isNot(contains('door')));
 
     await tester.pumpWidget(const SizedBox());
   });
@@ -451,6 +454,32 @@ void main() {
     await tester.pump(); // let _applyDetection's depth-channel await resolve
 
     expect(fakeVibration.calls, isEmpty);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Settings open mutes detection announcements too', (tester) async {
+    // Field finding: with TalkBack on, detections kept SPEAKING under the
+    // Settings route ("person ahead, 2 metres" while the user configures) —
+    // the mute contract covered haptics but not the announcement funnel. The
+    // constant chatter also trampled TalkBack focus/speech mid-navigation.
+    await tester.pumpWidget(buildApp());
+    await settleInit(tester);
+    expect(StatusAnnouncer.lastAnnounced, 'Scanning…'); // from pipeline start
+
+    await tester.tap(find.bySemanticsLabel('Open settings').first);
+    await tester.pump();
+    await tester.pump();
+
+    depthMock.depthMeters = 1.0;
+    for (var i = 0; i < kDetectionStabilityFrames; i++) {
+      fakeDetectionSource.addDetections([_personDetection()]);
+      await tester.pump();
+    }
+    await tester.pump();
+
+    // Nothing spoken, no status churn while the user is in Settings.
+    expect(StatusAnnouncer.lastAnnounced, 'Scanning…');
 
     await tester.pumpWidget(const SizedBox());
   });

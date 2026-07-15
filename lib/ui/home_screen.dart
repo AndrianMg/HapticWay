@@ -262,6 +262,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _onDetections(List<Detection> detections) {
     if (!mounted) return;
 
+    // Same mute contract as the haptic gates: while Settings or the WoZ
+    // panel sits on top, detections must neither speak nor churn the status
+    // card. With TalkBack on, the announcements talked straight over the
+    // user mid-configuration — and the constant speech trampled TalkBack's
+    // own focus feedback (§7.4 field finding).
+    if (_settingsOpen || _wozOpen) return;
+
     // Debug overlay: show every frame's raw boxes so box alignment is visible.
     if (kDebugMode) setState(() => _overlayDets = detections);
 
