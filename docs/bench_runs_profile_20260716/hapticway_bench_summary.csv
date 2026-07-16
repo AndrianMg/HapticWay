@@ -1,0 +1,16 @@
+﻿condition,timestamp,metric,n,mean_ms,sd_ms,p50_ms,p95_ms,p99_ms
+bright_empty,1784212304837,preprocess,20,10.9,3.9,9,18,20
+bright_empty,1784212304837,infer,20,40.5,11.3,38,60,65
+bright_empty,1784212304837,total,20,51.5,13.6,47,73,82
+dim_empty,1784212839394,preprocess,20,6.1,1.4,6,9,9
+dim_empty,1784212839394,infer,20,25.3,5.8,26,32,41
+dim_empty,1784212839394,total,20,31.4,5.9,31,39,46
+bright_crowded,1784213118644,preprocess,20,11.1,4.7,11,14,29
+bright_crowded,1784213118644,infer,20,38.1,7.2,40,49,50
+bright_crowded,1784213118644,total,20,49.2,9.4,50,62,70
+bright_crowded,1784213833138,preprocess,20,6.8,2.1,6,9,15
+bright_crowded,1784213833138,infer,20,34.3,9.0,35,46,57
+bright_crowded,1784213833138,total,20,41.0,9.9,42,61,64
+dim_crowded,1784214795352,preprocess,20,9.3,2.6,8,12,17
+dim_crowded,1784214795352,infer,20,39.1,14.7,36,71,71
+dim_crowded,1784214795352,total,20,48.4,15.7,43,81,81
