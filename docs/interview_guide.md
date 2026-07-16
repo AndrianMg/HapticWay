@@ -10,6 +10,22 @@ Before starting, re-confirm: participation is voluntary, they can say "stop"
 at any moment without explanation, and the blindfold (if applicable) is
 optional.
 
+## Demographics (researcher records, ~1 min)
+
+The anonymous demographic variables declared in `docs/DPIA.md` and the ethics
+submission. Recorded against the participant code only; reported in aggregate,
+never as identifiable combinations of demographics (DPIA risk 2).
+
+- Age band: 18–24 / 25–34 / 35–49 / 50+
+- Sight-loss severity and onset, in the participant's own words
+  (e.g. "congenitally blind", "low vision since 2019"): ________
+- Smartphone and assistive-technology experience: covered by pre-session
+  questions 4–5; researcher notes a one-line summary here afterwards: ________
+- Cultural background — optional, self-described. Ask as: "The study also
+  looks at whether haptic preferences differ across cultural backgrounds.
+  If you're happy to, how would you describe your cultural background?
+  You're welcome to skip this." ________
+
 ## Pre-session interview (~10 min)
 
 **Current navigation strategies**
