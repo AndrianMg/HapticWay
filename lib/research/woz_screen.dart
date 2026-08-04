@@ -144,7 +144,13 @@ class _WozScreenState extends State<WozScreen> {
   }
 
   void _inject(String label) {
-    final amplitude = IntensityCurve.amplitudeFor(_distance, k: _hapticK);
+    // Ahead uses the plain curve, same as the depth-poll radar. Left/right
+    // get the same directional floor real detections get in home_screen.dart
+    // — a participant in a WoZ session feels this injection standing in for
+    // the camera, so it must match what the live pipeline would have sent.
+    final amplitude = _direction == ObstacleDirection.ahead
+        ? IntensityCurve.amplitudeFor(_distance, k: _hapticK)
+        : IntensityCurve.directionalAmplitudeFor(_distance, k: _hapticK);
     Tacton.obstacle(_direction, amplitude);
     // Same announcement format as the live pipeline (label, direction,
     // bucketed metres) so WoZ and live segments sound identical to the

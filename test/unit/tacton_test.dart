@@ -72,7 +72,7 @@ void main() {
     test('obstacleRight sends a three-pulse pattern', () async {
       await Tacton.obstacleRight(0.6);
       expect(fake.calls, hasLength(1));
-      expect(fake.calls.single.pattern, [0, 60, 60, 60, 60, 60]);
+      expect(fake.calls.single.pattern, [0, 60, 110, 60, 110, 60]);
       expect(fake.calls.single.intensities, [0, 153, 0, 153, 0, 153]);
     });
 
@@ -243,7 +243,7 @@ void main() {
 
       advance(const Duration(milliseconds: 1600)); // clear pattern cooldown
       await Tacton.obstacle(ObstacleDirection.right, 0.6);
-      expect(fake.calls.last.pattern, [0, 60, 60, 60, 60, 60]);
+      expect(fake.calls.last.pattern, [0, 60, 110, 60, 110, 60]);
 
       advance(const Duration(milliseconds: 900)); // clear the quiet window
       await Tacton.obstacle(ObstacleDirection.ahead, 0.6);

@@ -278,7 +278,7 @@ void main() {
     await tester.pump();
 
     expect(fakeVibration.calls, hasLength(1));
-    expect(fakeVibration.calls.single.pattern, [0, 60, 60, 60, 60, 60]); // 3 = right
+    expect(fakeVibration.calls.single.pattern, [0, 60, 110, 60, 110, 60]); // 3 = right
     expect(find.textContaining('right'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());

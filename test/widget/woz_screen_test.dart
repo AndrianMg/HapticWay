@@ -52,6 +52,37 @@ void main() {
     expect(find.textContaining('SIM  person LEFT'), findsOneWidget);
   });
 
+  testWidgets('RIGHT at a far distance still floors amplitude to match a real detection', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pump(); // drain _loadK
+
+    await tester.tap(find.text('RIGHT'));
+    await tester.pump();
+    await tester.tap(find.text('3.0 m'));
+    await tester.pump();
+    await tester.tap(find.text('person'));
+    await tester.pump();
+
+    expect(fakeVibration.calls, hasLength(1));
+    // Raw curve at 3.0m/k=0.5 is ~0.06 — well under the 0.6 floor a real
+    // right-direction detection gets in home_screen.dart. Without the floor
+    // this would be [0, 14, 0, 14, 0, 14].
+    expect(fakeVibration.calls.single.intensities, [0, 153, 0, 153, 0, 153]);
+  });
+
+  testWidgets('AHEAD at a far distance stays unfloored, matching the depth-poll radar', (tester) async {
+    await tester.pumpWidget(buildApp());
+    await tester.pump();
+
+    await tester.tap(find.text('3.0 m'));
+    await tester.pump();
+    await tester.tap(find.text('person'));
+    await tester.pump();
+
+    expect(fakeVibration.calls, hasLength(1));
+    expect(fakeVibration.calls.single.amplitude, 14);
+  });
+
   testWidgets('default direction AHEAD fires the single throttled pulse', (tester) async {
     await tester.pumpWidget(buildApp());
     await tester.pump();

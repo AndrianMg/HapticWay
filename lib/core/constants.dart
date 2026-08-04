@@ -7,8 +7,10 @@ const double kMaxDistanceMeters = 4.0;
 // Directional tactons carry their information in pulse count (2 = left,
 // 3 = right); below this amplitude the pulses cannot be counted against the
 // radar's background pulses, so the live pipeline floors them here. Distance
-// is still conveyed by the ahead-radar and the spoken announcement. WoZ
-// injections bypass the floor — researcher-chosen amplitudes arrive verbatim.
+// is still conveyed by the ahead-radar and the spoken announcement. The WoZ
+// panel applies the same floor to its left/right injections, since those
+// stand in for real detections during a study session; ahead stays unfloored
+// in both places.
 const double kDirectionalAmplitudeFloor = 0.6;
 
 const String kPrefKeyHapticK = 'haptic_k';

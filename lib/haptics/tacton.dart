@@ -103,10 +103,12 @@ abstract final class Tacton {
         intensities: [0, _toInt(amplitude), 0, _toInt(amplitude)],
       );
 
-  /// Three short pulses — obstacle to the right.
+  /// Three short pulses — obstacle to the right. Gaps are wider than
+  /// [obstacleLeft]'s so the extra pulse still reads as separate events
+  /// instead of blurring together.
   static Future<void> obstacleRight(double amplitude) =>
       HapticEngine.vibratePattern(
-        pattern: const [0, 60, 60, 60, 60, 60],
+        pattern: const [0, 60, 110, 60, 110, 60],
         intensities: [
           0,
           _toInt(amplitude),

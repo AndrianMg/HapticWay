@@ -24,7 +24,7 @@ class HapticEngine {
   /// Android's vibrate() cancels the ongoing effect, so a radar pulse
   /// landing mid-pattern physically truncates the 2/3-pulse rhythm, and one
   /// landing right after it masks the count. Covers the longest pattern
-  /// (300 ms) plus a perceptual gap.
+  /// (400 ms) plus a perceptual gap.
   static const Duration kPatternQuietWindow = Duration(milliseconds: 800);
 
   // Monotonic clock — a wall-clock (DateTime.now) throttle silently drops
