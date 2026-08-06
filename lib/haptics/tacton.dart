@@ -1,6 +1,13 @@
 import '../core/constants.dart';
 import 'haptic_engine.dart';
 
+// Vocabulary of vibration patterns ("tactons", after Brewster & Brown 2004)
+// that turn a detection into something the user can feel and interpret
+// without looking at the screen. Pulse COUNT encodes direction (1 = ahead,
+// 2 = left, 3 = right); amplitude (from IntensityCurve) encodes proximity.
+// Every actual vibration call is delegated to HapticEngine, which owns
+// throttling and failure handling — this file only defines the patterns.
+
 /// Horizontal position of an obstacle relative to the camera frame.
 /// Tactons encode where the obstacle IS (move away from it), not where to go.
 enum ObstacleDirection {

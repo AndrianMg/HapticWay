@@ -18,6 +18,19 @@ import '../research/woz_session_log.dart';
 import 'settings_screen.dart';
 import 'widgets/status_announcer.dart';
 
+// The main (and only continuously active) screen. This is where the app's
+// two independent feedback channels both terminate:
+//   - the FAST path: _pollDepth() samples ARCore depth every 300-700 ms
+//     (adaptive) and drives vibration directly from raw distance, so even a
+//     plain wall — which the six-class detector doesn't recognise — still
+//     triggers a warning. This never waits on the ML model.
+//   - the SLOW path: _onDetections()/_applyDetection() react to whatever the
+//     background inference isolate (CameraIsolate) reports, driving the
+//     status card, TalkBack announcements, and directional (off-centre)
+//     tactons.
+// WidgetsBindingObserver ties both to the Android app lifecycle: backgrounding
+// the app must stop the camera and vibration together, otherwise the phone
+// keeps buzzing in the user's pocket after they've switched away.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, this.detectionSource});
 

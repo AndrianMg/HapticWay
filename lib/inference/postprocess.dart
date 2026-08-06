@@ -4,7 +4,20 @@ import 'dart:ui';
 import '../core/constants.dart';
 import 'detection.dart';
 
-// Parses YOLOv8 TFLite output into a filtered, NMS-deduplicated Detection list.
+// Turns the model's raw numeric output into usable Detection objects.
+//
+// A YOLO model doesn't output "there's a door at this box" directly — it
+// outputs a fixed grid of candidate boxes (anchors), each with a confidence
+// score per class. Most of that grid is empty space and duplicate/overlapping
+// boxes around the same real object. This class does the three jobs that
+// turn that raw tensor into something the app can act on:
+//   1. keep only anchors above kMinConfidence, for a class this app cares
+//      about (_targetClasses — the six-class navigation set)
+//   2. non-maximum suppression (NMS): where several boxes overlap the same
+//      object, keep only the highest-confidence one
+//   3. map box coordinates back out of "letterboxed model space" (320×320
+//      with grey padding) into the original camera frame, so the UI/depth
+//      sampler can use them directly
 class Postprocess {
   static const _targetClasses = {
     'person', 'bicycle', 'bench', 'chair',

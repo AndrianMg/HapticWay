@@ -21,6 +21,14 @@ abstract class DetectionSource {
 
 /// Manages a long-running background isolate that runs TFLite inference.
 ///
+/// This is the "slow path" of the app's two-channel architecture (the "fast
+/// path" is the depth-poll haptic radar in HomeScreen, which never waits for
+/// this). Dart is single-threaded per isolate, so running a ~30 ms model
+/// inference on the UI isolate would freeze the interface on every frame —
+/// unacceptable for an app a blind user navigates largely by touch and
+/// screen-reader feedback. Spawning a dedicated background isolate keeps the
+/// UI thread free regardless of how long inference takes.
+///
 /// §6.1 change: camera frames now come from [ArDepthChannel.frameStream]
 /// (ARCore EventChannel) instead of the Flutter camera plugin image stream.
 /// The isolate boundary contract is unchanged — only preprocessed pixel data

@@ -5,6 +5,11 @@ import '../ui/widgets/status_announcer.dart';
 
 /// Single guarded funnel for every vibration call in the app.
 ///
+/// This is the bottom layer of the haptic stack: [IntensityCurve] decides
+/// how strong a pulse should be, [Tacton] decides which pattern to play, and
+/// this class is the only place that actually calls the platform vibrator —
+/// nothing else in the app touches the `vibration` package directly.
+///
 /// All `Vibration.*` calls go through here so a failing haptic path can never
 /// die silently: platform errors are caught and counted, and after
 /// [kFailureThreshold] consecutive failures the user is told via

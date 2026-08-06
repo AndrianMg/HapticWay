@@ -2,6 +2,13 @@ import 'package:flutter/services.dart';
 
 /// Flutter wrapper for the Kotlin ArDepthChannel.
 ///
+/// This is the Dart-side half of the platform-channel bridge; the real work
+/// (ARCore session, camera preview, depth-image decoding) happens on the
+/// native Android side in ArDepthChannel.kt. Two channels cross the bridge:
+/// a MethodChannel for one-shot calls (start/stop/sampleDepth) and an
+/// EventChannel ([frameStream]) that streams a camera frame roughly every
+/// 33 ms for [CameraIsolate] to run inference on.
+///
 /// Call [start] once at app launch; it returns the Flutter texture ID
 /// that backs the [Texture] widget used as camera preview.
 /// [frameStream] delivers YUV_420_888 maps for on-device TFLite inference.

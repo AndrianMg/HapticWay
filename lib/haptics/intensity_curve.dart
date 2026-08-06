@@ -2,6 +2,16 @@ import 'dart:math' as math;
 
 import '../core/constants.dart';
 
+// Maps obstacle distance to vibration strength — the mathematical core of
+// the haptic feedback loop. Both the depth-poll radar (HomeScreen._pollDepth)
+// and the directional tactons (Tacton) call into this; the actual vibration
+// call happens one layer down, in HapticEngine.
+//
+// Shape: A(d) = min(1.0, k/d²), an inverse-square falloff rather than a
+// linear one. This is a deliberate design choice (not an empirically
+// validated result — see the VIVA prep note), chosen because it concentrates
+// the intensity gradient near the user, where reaction time is shortest,
+// instead of spreading it evenly across the whole sensing range.
 abstract final class IntensityCurve {
   /// Inverse-square haptic amplitude: A(d) = min(1.0, k / d²)
   ///
