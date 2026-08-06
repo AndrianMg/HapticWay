@@ -218,13 +218,12 @@ class _FrameMsg {
   final int width, height, yRowStride, uvRowStride, uvPixelStride;
   // S20 Ultra sensor orientation is 90° CW; portrait deployment always needs
   // the frame rotated 90° CW to upright before inference.
-  final int rotationDegrees;
+  final int rotationDegrees = 90;
   const _FrameMsg({
     required this.y, required this.u, required this.v,
     required this.width, required this.height,
     required this.yRowStride, required this.uvRowStride,
     required this.uvPixelStride,
-    this.rotationDegrees = 90,
   });
 }
 
