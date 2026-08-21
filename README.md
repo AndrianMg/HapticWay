@@ -160,3 +160,11 @@ tool/
 | Inverse-square haptic curve, A(d) = min(1, k/d²) | Concentrates the intensity gradient near the user, where reaction time is shortest — a design choice, not an empirically validated result (see the VIVA prep notes) |
 | Background isolate for inference | Keeps the UI thread responsive; blocking it would freeze the interface for a user navigating largely by touch and screen reader |
 | minSdk = 29 (Android 10) | Required for `vibration` amplitude control and the ARCore Depth API |
+
+---
+
+## License
+
+HapticWay is dual-licensed under [AGPLv3](LICENSE) (free, copyleft) and a
+separate commercial license for closed-source use — see
+[`COMMERCIAL_LICENSE.md`](COMMERCIAL_LICENSE.md) for details.
